@@ -701,37 +701,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         RemoveExtensionFeature(extensions.vertex_input_dynamic_state, features.vertex_input_dynamic_state, VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
     }
 
-    // Descriptors feature list
-    {
-        auto& descriptor_indexing = features.descriptor_indexing;
-        descriptor_indexing.shaderInputAttachmentArrayDynamicIndexing = false;
-        descriptor_indexing.shaderUniformTexelBufferArrayDynamicIndexing = false;
-        descriptor_indexing.shaderStorageTexelBufferArrayDynamicIndexing = false;
-        descriptor_indexing.shaderUniformBufferArrayNonUniformIndexing = false;
-        descriptor_indexing.shaderStorageBufferArrayNonUniformIndexing = false;
-        descriptor_indexing.shaderInputAttachmentArrayNonUniformIndexing = false;
-        descriptor_indexing.descriptorBindingUniformBufferUpdateAfterBind = false;
-        descriptor_indexing.descriptorBindingSampledImageUpdateAfterBind = false;
-        descriptor_indexing.descriptorBindingStorageImageUpdateAfterBind = false;
-        descriptor_indexing.descriptorBindingStorageBufferUpdateAfterBind = false;
-        descriptor_indexing.descriptorBindingUniformTexelBufferUpdateAfterBind = false;
-        descriptor_indexing.descriptorBindingStorageTexelBufferUpdateAfterBind = false;
-        descriptor_indexing.descriptorBindingUpdateUnusedWhilePending = false;
-        descriptor_indexing.descriptorBindingVariableDescriptorCount = false;
-        descriptor_indexing.runtimeDescriptorArray = false;
-    }
-
-    // VK_EXT_descriptor_buffer requires VK_KHR_buffer_device_address
-    if (extensions.descriptor_buffer && !features.buffer_device_address.bufferDeviceAddress) {
-        LOG_WARNING(Render_Vulkan, "Descriptor buffer needs buffer device address, disabling.");
-        RemoveExtensionFeature(extensions.descriptor_buffer, features.descriptor_buffer,
-                               VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
-    }
-    if (!extensions.descriptor_buffer) {
-        RemoveExtensionFeature(extensions.buffer_device_address, features.buffer_device_address,
-                               VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-    }
-
     logical = vk::Device::Create(physical, queue_cis, ExtensionListForVulkan(loaded_extensions), first_next, dld);
 
     graphics_queue = logical.GetQueue(graphics_family);
