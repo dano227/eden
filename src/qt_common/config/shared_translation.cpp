@@ -274,6 +274,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Enables access to previous buffer states.\nThis option may improve rendering "
               "quality and performance consistency in some games."));
     INSERT(Settings, fix_bloom_effects, tr("Fix bloom effects"), tr("Removes bloom in Burnout."));
+    INSERT(Settings, aggressive_gc, tr("Enable Aggressive Garbage Collector"),
+           tr("Different logic for Garbage Collector. May improve or decrease performance."));
+    INSERT(Settings, depth_clamp, tr("Depth Clamp"),
+           tr("Enabling Toggle turns it ON for EDS0,1,2 and OFF for EDS3. Fixes broken fog in SMO EDS0,1,2 and TOTK Skybox on EDS3."));
 
     // Renderer (Extensions)
     INSERT(Settings, dyna_state, tr("Extended Dynamic State"),

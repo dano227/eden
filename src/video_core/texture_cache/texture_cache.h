@@ -129,15 +129,19 @@ void TextureCache<P>::RunGarbageCollector() {
         if (num_iterations == 0) {
             return true;
         }
-        --num_iterations;
+        if (!Settings::values.aggressive_gc.GetValue()) --num_iterations;
         auto& image = slot_images[image_id];
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
         const bool must_download = IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
-        if ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download)) {
+        bool gc_logic = Settings::values.aggressive_gc.GetValue()
+          ? (!aggressive_mode && !high_priority_mode && (True(image.flags & ImageFlagBits::CostlyLoad) || must_download))
+          : ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download));
+        if (gc_logic) {
             return false;
         }
+        if (Settings::values.aggressive_gc.GetValue()) --num_iterations;
         if (must_download) {
             auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
             const auto copies = FullDownloadCopies(image.info);
