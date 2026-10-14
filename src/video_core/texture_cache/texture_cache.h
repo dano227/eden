@@ -2036,7 +2036,6 @@ void TextureCache<P>::TickAsyncUnswizzleCpu(PendingUnswizzle& task, Image& image
 
             task.last_submitted_slice += chunk.z_count;
             task.cpu_job_in_flight = false;
->>>>>>> 91eeaa71b8 (Improved Unswizzle Logic)
         }
     }
 
