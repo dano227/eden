@@ -87,7 +87,9 @@ IR::Value ResolveConditionalPhi(IR::Value value, const IR::Block* block) {
 
 constexpr u32 DESCRIPTOR_SIZE = 8;
 constexpr u32 DESCRIPTOR_SIZE_SHIFT = u32(std::countr_zero(DESCRIPTOR_SIZE));
-constexpr u32 DESCRIPTOR_MAX_COUNT = 1024;
+u32 DESCRIPTOR_MAX_COUNT() {
+    return Settings::values.mp4_hack.GetValue();
+}
 
 u32 DynamicDescriptorSizeShift(const IR::U32& dynamic_offset) {
     const IR::Inst* const inst = dynamic_offset.InstRecursive();
@@ -141,7 +143,7 @@ u32 DynamicSampledTextureCap(const Info& info, const HostTranslateInfo& host_inf
         auto const resource_cap = resource_budget / dynamic_arrays;
         return (std::max)(1U, (std::min)(sampled_cap, resource_cap));
     }
-    return (std::min)({DESCRIPTOR_MAX_COUNT, sampled_limit, resource_limit});
+    return (std::min)({DESCRIPTOR_MAX_COUNT(), sampled_limit, resource_limit});
 }
 
 IR::Opcode IndexedInstruction(const IR::Inst& inst) {
@@ -515,7 +517,7 @@ std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environme
         .secondary_offset = 0,
         .secondary_shift_left = 0,
         .dynamic_offset = dynamic_offset,
-        .count = DynamicDescriptorCount(base_offset, size_shift, (std::min)({DESCRIPTOR_MAX_COUNT, sampled_limit, resource_limit})),
+        .count = DynamicDescriptorCount(base_offset, size_shift, (std::min)({DESCRIPTOR_MAX_COUNT(), sampled_limit, resource_limit})),
         .has_secondary = false,
     };
 }
