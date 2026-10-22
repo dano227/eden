@@ -179,6 +179,7 @@ public:
                               use_precise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
         });
 
+        counted_since_reset = false;
         has_started = true;
     }
 
@@ -354,6 +355,12 @@ public:
         }
         if (!current_query) {
             new_query->flags |= VideoCommon::QueryFlagBits::IsFinalValueSynced;
+            // TEST: the zero shortcut may cull visible things when the game resets and
+            // queries before anything is counted (cloud sea disappearing on camera pitch).
+            if (false && !has_timestamp && !counted_since_reset) {
+                // Nothing was counted since the last reset, the value is zero
+                new_query->flags |= VideoCommon::QueryFlagBits::IsValueKnown;
+            }
             return index;
         }
         new_query->start_bank_id = current_query->start_bank_id;
@@ -471,6 +478,7 @@ private:
     void ReserveHostQuery() {
         size_t new_slot = ReserveBankSlot();
         current_bank->AddReference(1);
+        counted_since_reset = true;
         num_slots_used++;
         if (current_query) {
             size_t bank_id = current_query->start_bank_id;
@@ -605,6 +613,7 @@ private:
     size_t first_accumulation_checkpoint{};
     size_t last_accumulation_checkpoint{};
     bool accumulation_since_last_sync{};
+    bool counted_since_reset{};
     VideoCommon::HostQueryBase* current_query;
     bool has_started{};
     std::mutex flush_guard;
@@ -1362,6 +1371,11 @@ QueryCacheRuntime::QueryCacheRuntime(VideoCore::RasterizerInterface* rasterizer,
         staging_pool_, compute_pass_descriptor_queue, descriptor_pool, texture_cache_);
 }
 
+void QueryCacheRuntime::WriteKnownValue(DAddr address, std::span<const u8> data) {
+    std::scoped_lock lk(impl->buffer_cache.mutex);
+    impl->buffer_cache.InlineMemory(address, data.size(), data);
+}
+
 void QueryCacheRuntime::Bind3DEngine(Maxwell3D* maxwell3d) {
     impl->maxwell3d = maxwell3d;
 }
@@ -1648,7 +1662,27 @@ void QueryCacheRuntime::SyncValues(std::span<SyncValuesType> values, VkBuffer ba
                 pair.first, static_cast<u32>(pair.second - pair.first), sync_info, post_op);
             impl->buffers_to_upload_to.emplace_back(buffer->Handle(), offset);
         }
+        // Suppress stale guest copies over the query values: without it, uniform buffers bound
+        // over these ranges copy from guest memory and shaders read stale occlusion results,
+        // which culled the Xenoblade Chronicles 2 cloud sea when pitching the camera.
+        // MarkAsWritten froze games at boot because it also flags pages GPU modified and queues
+        // deferred commits; the range set alone is the protection without the obligations.
+        for (auto& sync_val : values) {
+            impl->buffer_cache.MarkQueryRange(sync_val.address, static_cast<u32>(sync_val.size));
+        }
     });
+    // Instead, write the values to guest memory right here: shaders can read them from the
+    // buffer before a deferred write reaches guest memory, and a copy from stale guest memory
+    // then culls things that are visible (the Xenoblade Chronicles 2 cloud sea). The values are
+    // known at this point, so no marking is needed at all. The buffer cache lock is already
+    // held, which InlineMemory expects.
+    if constexpr (SyncValuesType::GeneratesBaseBuffer) {
+        for (auto& val : values) {
+            impl->buffer_cache.InlineMemory(
+                val.address, val.size,
+                std::span<const u8>{reinterpret_cast<const u8*>(&val.value), val.size});
+        }
+    }
 
     VkBuffer src_buffer;
     [[maybe_unused]] StagingBufferRef ref;

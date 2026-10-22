@@ -288,6 +288,20 @@ public:
                                                        ObtainBufferSynchronize sync_info,
                                                        ObtainBufferOperation post_op);
 
+    /// Suppresses guest-to-GPU copies over a range the GPU buffer already holds, without the
+    /// GPU modified page flags or the deferred commit that turn the range into a sync
+    /// obligation (which froze games at boot when applied to query results).
+    void MarkQueryRange(DAddr device_addr, u32 size) {
+        // The stale-copy path reads the tracker's GPU-modified page flags
+        // (IsRegionGpuModified), not just the range set: without the flags, uniform
+        // buffers bound over query values still copy from guest memory and the
+        // occlusion culling reads stale results (the disappearing cloud sea).
+        // The deferred commit is still left out: that is the part that froze games
+        // at boot when MarkAsWritten queued commit obligations.
+        memory_tracker.MarkRegionAsGpuModified(device_addr, size);
+        gpu_modified_ranges.Add(device_addr, size);
+    }
+
     [[nodiscard]] std::pair<Buffer*, u32> ObtainCPUBuffer(DAddr gpu_addr, u32 size,
                                                           ObtainBufferSynchronize sync_info,
                                                           ObtainBufferOperation post_op);
@@ -431,6 +445,7 @@ private:
     void UpdateComputeTextureBuffers();
 
     void MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u32 size, bool needs_sync = false);
+
 
     [[nodiscard]] BufferId FindBuffer(DAddr device_addr, u32 size, bool sparse_compatible);
 

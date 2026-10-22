@@ -662,6 +662,9 @@ struct Values {
     SwitchableSetting<bool> depth_clamp{linkage, false, "depth_clamp",
                                                      Category::RendererHacks};
 
+
+
+
     SwitchableSetting<bool> use_asynchronous_shaders{linkage, false, "use_asynchronous_shaders",
                                                      Category::RendererHacks};
 

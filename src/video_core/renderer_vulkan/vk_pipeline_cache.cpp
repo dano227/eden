@@ -379,6 +379,7 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
     profile = Shader::Profile{
         .supported_spirv = device.SupportedSpirvVersion(),
         .unified_descriptor_binding = true,
+        .needs_depth_quantize = !device.SupportsD24DepthBuffer(),
         .support_descriptor_aliasing = device.IsDescriptorAliasingSupported(),
         .support_int8 = device.IsInt8Supported(),
         .support_uniform_and_storage_buffer_8bit =
@@ -472,6 +473,11 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         .max_per_stage_descriptor_sampled_images = device.GetMaxPerStageDescriptorSampledImages(),
         .max_per_stage_resources = device.GetMaxPerStageResources(),
         .max_descriptor_set_samplers = device.GetMaxDescriptorSetSamplers(),
+        // Hosts other than NVIDIA interpolate the varyings of huge clipped primitives less
+        // precisely than the guest, see PositionVaryingPass
+        .support_barycentric_varyings = driver_id != VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+                                        device.IsKhrFragmentShaderBarycentricSupported(),
+        .support_position_varyings = driver_id != VK_DRIVER_ID_NVIDIA_PROPRIETARY,
         .max_descriptor_set_uniform_buffers = device.GetMaxDescriptorSetUniformBuffers(),
         .max_descriptor_set_uniform_buffers_dynamic = device.GetMaxDescriptorSetUniformBuffersDynamic(),
         .max_descriptor_set_storage_buffers = device.GetMaxDescriptorSetStorageBuffers(),
@@ -855,6 +861,34 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
 
         if (programs[index].info.requires_layer_emulation) {
             layer_source_program = &programs[index];
+        }
+    }
+    // Rebuild clip space position varyings in the fragment shader when the vertex shader feeds it
+    // directly
+    const bool has_tessellation_or_geometry{key.unique_hashes[2] != 0 || key.unique_hashes[3] != 0 ||
+                                            key.unique_hashes[4] != 0 || layer_source_program};
+    if (host_info.support_position_varyings && !has_tessellation_or_geometry &&
+        key.unique_hashes[1] != 0 && key.unique_hashes[5] != 0) {
+        const bool is_triangle_list_or_strip{[&] {
+            switch (key.state.topology) {
+            case Maxwell::PrimitiveTopology::Triangles:
+            case Maxwell::PrimitiveTopology::TriangleStrip:
+            case Maxwell::PrimitiveTopology::TriangleFan:
+            case Maxwell::PrimitiveTopology::Quads:
+            case Maxwell::PrimitiveTopology::QuadStrip:
+            case Maxwell::PrimitiveTopology::Polygon:
+                return true;
+            default:
+                return false;
+            }
+        }()};
+        const bool is_fill{FixedPipelineState::UnpackPolygonMode(key.state.polygon_mode) ==
+                           Maxwell::PolygonMode::Fill};
+        if (host_info.support_barycentric_varyings && is_triangle_list_or_strip &&
+            is_fill) {
+            Shader::Optimization::BarycentricVaryingPass(programs[1], programs[5]);
+        } else {
+            Shader::Optimization::PositionVaryingPass(programs[1], programs[5]);
         }
     }
     std::array<const Shader::Info*, Maxwell::MaxShaderStage> infos{};

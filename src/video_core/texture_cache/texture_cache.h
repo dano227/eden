@@ -290,7 +290,6 @@ void TextureCache<P>::CheckFeedbackLoop(std::span<const ImageViewInOut> views) {
         runtime.BarrierFeedbackLoop();
     }
 }
-
 template <class P>
 typename P::Sampler* TextureCache<P>::GetSampler(u32 index, bool compute) {
     return &slot_samplers[GetSamplerId(index, compute)];
