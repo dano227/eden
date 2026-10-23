@@ -89,7 +89,21 @@ IR::Value ResolveConditionalPhi(IR::Value value, const IR::Block* block) {
 constexpr u32 DESCRIPTOR_SIZE = 8;
 constexpr u32 DESCRIPTOR_SIZE_SHIFT = u32(std::countr_zero(DESCRIPTOR_SIZE));
 u32 DESCRIPTOR_MAX_COUNT() {
-    return Settings::values.mp4_hack.GetValue();
+    switch (Settings::values.mp4_hack.GetValue()) {
+    case Settings::DescriptorMaxCount::Count8:
+        return 8;
+    case Settings::DescriptorMaxCount::Count64:
+        return 64;
+    case Settings::DescriptorMaxCount::Count128:
+        return 128;
+    case Settings::DescriptorMaxCount::Count256:
+        return 256;
+    case Settings::DescriptorMaxCount::Count512:
+        return 512;
+    case Settings::DescriptorMaxCount::Count1024:
+        return 1024;
+    }
+    return 512;
 }
 /// Largest constant buffer span assumed when sizing dynamic descriptor arrays
 u32 MaxCbufSize() {
