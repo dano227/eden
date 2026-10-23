@@ -373,6 +373,16 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
 #define PAIR(ENUM, VALUE, TRANSLATION) {static_cast<u32>(Settings::ENUM::VALUE), (TRANSLATION)}
 
     // Intentionally skipping VSyncMode to let the UI fill that one out
+    translations->insert({Settings::EnumMetadata<Settings::DescriptorMaxCount>::Index(),
+                          {
+                              PAIR(DescriptorMaxCount, Count8, tr("8")),
+                              PAIR(DescriptorMaxCount, Count64, tr("64")),
+                              PAIR(DescriptorMaxCount, Count128, tr("128")),
+                              PAIR(DescriptorMaxCount, Count256, tr("256")),
+                              PAIR(DescriptorMaxCount, Count512, tr("512")),
+                              PAIR(DescriptorMaxCount, Count1024, tr("1024")),
+                          }});
+
     translations->insert({Settings::EnumMetadata<Settings::AppletMode>::Index(),
                           {
                               PAIR(AppletMode, HLE, tr("Custom frontend")),

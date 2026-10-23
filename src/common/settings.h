@@ -679,12 +679,10 @@ struct Values {
     SwitchableSetting<bool> gpu_unswizzle_enabled{linkage, false, "gpu_unswizzle_enabled",
                                                   Category::RendererHacks};
 
-    SwitchableSetting<u16, true> mp4_hack{linkage,
-                                           8,
-                                           8,
-                                           2048,
-                                           "mp4_hack",
-                                           Category::RendererHacks};
+    SwitchableSetting<DescriptorMaxCount, true> mp4_hack{linkage,
+                                                        DescriptorMaxCount::Count512,
+                                                        "mp4_hack",
+                                                        Category::RendererHacks};
 
     SwitchableSetting<ExtendedDynamicState> dyna_state{linkage,
 #if defined(__ANDROID__)

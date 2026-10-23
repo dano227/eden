@@ -116,6 +116,9 @@ inline AudioEngine EnumMetadata<AudioEngine>::GetLast() {
     return AudioEngine::Null;
 }
 
+// Allowed DESCRIPTOR_MAX_COUNT values for the adjustable descriptor hack
+ENUM(DescriptorMaxCount, Count8, Count64, Count128, Count256, Count512, Count1024);
+
 ENUM(AudioMode, Mono, Stereo, Surround);
 //static_assert(EnumMetadata<AudioMode>::GetFirst() == AudioMode::Mono);
 //static_assert(EnumMetadata<AudioMode>::GetLast() == AudioMode::Surround);
