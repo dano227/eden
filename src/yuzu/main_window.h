@@ -558,6 +558,8 @@ private:
 
     QActionGroup* game_size_actions;
     std::vector<QAction*> runtime_cheat_actions;
+    /// Title id of the running game, used to persist its cheat states
+    u64 current_title_id = 0;
 
     // Debugger panes
     ControllerDialog* controller_dialog = nullptr;
