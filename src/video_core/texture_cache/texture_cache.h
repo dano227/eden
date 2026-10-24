@@ -163,7 +163,12 @@ void TextureCache<P>::RunGarbageCollector() {
     };
     deadline = std::chrono::steady_clock::now() + std::chrono::microseconds{250};
     Configure(false);
-    if (!high_priority_mode && !aggressive_mode) {
+    if (!high_priority_mode && !aggressive_mode && !Settings::values.aggressive_gc.GetValue()) {
+        // No memory pressure and the resident policy: the working set stays. Sweeping by
+        // age here just thrashes games that reuse their textures (Hades 2 halved its
+        // frame rate that way).
+        return;
+    }
         // No memory pressure: the working set stays resident. Sweeping by age here just
         // thrashes - games like Tears of the Kingdom reallocate the destroyed textures
         // every frame (constant cleaning below the threshold was the slow leak of FPS).

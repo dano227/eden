@@ -606,6 +606,12 @@ struct Values {
     SwitchableSetting<bool> barrier_feedback_loops{linkage, true, "barrier_feedback_loops",
                                                    Category::RendererAdvanced};
 
+    // GC policy: off = keep the working set resident while memory is healthy (best for
+    // games that reuse their textures, like Hades 2); on = sweep young images even while
+    // healthy (helps games whose long sessions degrade unless textures cycle, like Tears
+    // of the Kingdom). The per-image protections and the pass budget apply to both.
+    SwitchableSetting<bool> aggressive_gc{linkage, false, "aggressive_gc",
+                                          Category::RendererHacks};
     SwitchableSetting<bool> enable_buffer_history{linkage,
                                                   false,
                                                   "enable_buffer_history",
