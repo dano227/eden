@@ -169,11 +169,6 @@ void TextureCache<P>::RunGarbageCollector() {
         // frame rate that way).
         return;
     }
-        // No memory pressure: the working set stays resident. Sweeping by age here just
-        // thrashes - games like Tears of the Kingdom reallocate the destroyed textures
-        // every frame (constant cleaning below the threshold was the slow leak of FPS).
-        return;
-    }
     lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     if (total_used_memory >= critical_memory) {
         Configure(true);
