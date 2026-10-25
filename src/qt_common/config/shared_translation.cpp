@@ -277,10 +277,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, depth_clamp, tr("Depth Clamp"),
            tr("Enabling Toggle turns it ON for EDS0,1,2 and OFF for EDS3. Fixes broken fog in SMO EDS0,1,2 and TOTK Skybox on EDS3."));
 
-    INSERT(Settings, aggressive_gc, tr("GC aggressive sweep (per-game)"),
-           tr("Sweep recently used textures even while memory is healthy.\n"
-              "Helps games that degrade over long sessions (Tears of the Kingdom);\n"
-              "games that reuse textures (Hades 2) prefer this off."));
     INSERT(Settings, aggressive_gc, tr("Enable Aggressive Garbage Collector"),
            tr("Different logic for Garbage Collector. May improve or decrease performance."));
 
