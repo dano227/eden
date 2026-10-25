@@ -111,35 +111,23 @@ void TextureCache<P>::RunGarbageCollector() {
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
     };
-    std::chrono::steady_clock::time_point deadline{};
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &deadline](ImageId image_id) {
+    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
-        --num_iterations;
+        if (!Settings::values.aggressive_gc.GetValue()) --num_iterations;
         auto& image = slot_images[image_id];
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
         const bool must_download = IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
-        // The aggressive policy, baked on: per-image protections hold until the CRITICAL
-        // memory level. Dropping them earlier (at high_priority) made the collector thrash
-        // the cache in games that sit above the expected line constantly (Hades 2 halved
-        // its frame rate that way). Above critical the protections drop: OOM outranks reuse.
-        const bool gc_logic =
-            !aggressive_mode && (True(image.flags & ImageFlagBits::CostlyLoad) || must_download);
+        bool gc_logic = Settings::values.aggressive_gc.GetValue()
+          ? (!aggressive_mode && !high_priority_mode && (True(image.flags & ImageFlagBits::CostlyLoad) || must_download))
+          : ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download));
         if (gc_logic) {
-            // Protected images are a cheap skip and must not consume the pass budget, or a
-            // long tail of them can starve the sweep of the real work (a leak like Tears of
-            // the Kingdom's would outpace the collector and OOM).
             return false;
         }
-        // Real work follows (destroy, possibly a download with a GPU sync). Pause the sweep
-        // when over budget, but keep fighting while memory is above the critical line.
-        if (std::chrono::steady_clock::now() >= deadline && total_used_memory < critical_memory) {
-            return true;
-        }
+        if (Settings::values.aggressive_gc.GetValue()) --num_iterations;
         if (must_download) {
             auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
             const auto copies = FullDownloadCopies(image.info);
@@ -161,18 +149,10 @@ void TextureCache<P>::RunGarbageCollector() {
         }
         return false;
     };
-    deadline = std::chrono::steady_clock::now() + std::chrono::microseconds{250};
     Configure(false);
-    if (!high_priority_mode && !aggressive_mode && !Settings::values.aggressive_gc.GetValue()) {
-        // No memory pressure and the resident policy: the working set stays. Sweeping by
-        // age here just thrashes games that reuse their textures (Hades 2 halved its
-        // frame rate that way).
-        return;
-    }
     lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     if (total_used_memory >= critical_memory) {
         Configure(true);
-        deadline = std::chrono::steady_clock::now() + std::chrono::microseconds{250};
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     }
 }

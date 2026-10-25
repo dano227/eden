@@ -281,6 +281,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Sweep recently used textures even while memory is healthy.\n"
               "Helps games that degrade over long sessions (Tears of the Kingdom);\n"
               "games that reuse textures (Hades 2) prefer this off."));
+    INSERT(Settings, aggressive_gc, tr("Enable Aggressive Garbage Collector"),
+           tr("Different logic for Garbage Collector. May improve or decrease performance."));
+
     // Renderer (Extensions)
     INSERT(Settings, dyna_state, tr("Extended Dynamic State"),
            tr("Controls the number of features that can be used in Extended Dynamic State.\n"
