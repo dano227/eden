@@ -606,9 +606,6 @@ struct Values {
     SwitchableSetting<bool> barrier_feedback_loops{linkage, true, "barrier_feedback_loops",
                                                    Category::RendererAdvanced};
 
-    SwitchableSetting<bool> aggressive_gc{linkage, false, "aggressive_gc",
-                                                    Category::RendererHacks, Specialization::Default, true, true};
-
     SwitchableSetting<bool> enable_buffer_history{linkage,
                                                   false,
                                                   "enable_buffer_history",

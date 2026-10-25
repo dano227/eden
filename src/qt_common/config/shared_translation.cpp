@@ -277,9 +277,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, depth_clamp, tr("Depth Clamp"),
            tr("Enabling Toggle turns it ON for EDS0,1,2 and OFF for EDS3. Fixes broken fog in SMO EDS0,1,2 and TOTK Skybox on EDS3."));
 
-    INSERT(Settings, aggressive_gc, tr("Enable Aggressive Garbage Collector"),
-           tr("Different logic for Garbage Collector. May improve or decrease performance."));
-
     // Renderer (Extensions)
     INSERT(Settings, dyna_state, tr("Extended Dynamic State"),
            tr("Controls the number of features that can be used in Extended Dynamic State.\n"
