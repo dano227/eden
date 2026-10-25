@@ -30,6 +30,12 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
 
     // A setting can be ignored by giving it a blank name
 
+    INSERT(Settings, console_debug_overlay, tr("Controller Debug Overlay"),
+           tr("Shows the connected controllers and the console logic's actions in the top "
+              "right of the game window."));
+    INSERT(Settings, builtin_pad_identity, QString(), QString());
+    INSERT(Settings, builtin_pad_manual, QString(), QString());
+
     // Applets
     INSERT(Settings, cabinet_applet_mode, tr("Amiibo editor"), QString());
     INSERT(Settings, controller_applet_mode, tr("Controller configuration"), QString());
@@ -384,6 +390,8 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(AppletMode, HLE, tr("Custom frontend")),
                               PAIR(AppletMode, LLE, tr("Real applet")),
                               PAIR(AppletMode, Disabled, tr("Disabled")),
+                              PAIR(AppletMode, ConsoleMode, tr("Console Mode")),
+                              PAIR(AppletMode, HandheldConsoleMode, tr("Handheld Console Mode")),
                           }});
 
     translations->insert({Settings::EnumMetadata<Settings::SpirvOptimizeMode>::Index(),

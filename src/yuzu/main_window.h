@@ -14,6 +14,13 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTimer>
+#include <chrono>
+#include <deque>
+#include <map>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 #include <QTranslator>
 #include <qaction.h>
 
@@ -49,6 +56,7 @@ class LoadingScreen;
 class OverlayDialog;
 class ControllerDialog;
 class QLabel;
+class QShortcut;
 class MultiplayerState;
 class QPushButton;
 class QProgressDialog;
@@ -558,6 +566,33 @@ private:
 
     QActionGroup* game_size_actions;
     std::vector<QAction*> runtime_cheat_actions;
+
+    /// Console modes: reapplies the emulated player count from the physically connected
+    /// gamepads on a timer
+    QTimer console_mode_timer;
+    void ApplyConsoleControllerMode();
+    /// connection instance -> player slot; entries survive a disconnect so the pad
+    /// reclaims its own player when it returns
+    std::map<u32, int> pad_slots;
+    /// connection instance -> stable identity (serial, else model GUID), for matching a
+    /// returning pad that comes back under a new instance
+    std::map<u32, std::string> pad_identity;
+    /// connection instance -> (settings-tab name, raw name), for naming events
+    std::map<std::string, std::pair<QString, QString>> pad_names;
+    /// identities live last tick, for arrival/departure events (churn is silent)
+    std::set<std::string> prev_live_idents;
+    /// The handheld's own pad (connection instance): never a player while other pads are
+    /// connected
+    u32 builtin_pad_id = 0;
+    /// The built-in's stable identity: the exclusion must survive its instance changing
+    std::string builtin_identity;
+    /// Latched once the built-in has been identified
+    bool builtin_seen_first = false;
+    /// Warn once per engagement when the built-in cannot be identified
+    bool builtin_warned = false;
+    /// Debug overlay + event trace for comparing the logic against the real state
+    std::deque<std::pair<qint64, QString>> console_debug_events;
+    void PushConsoleEvent(const QString& line);
     /// Title id of the running game, used to persist its cheat states
     u64 current_title_id = 0;
 

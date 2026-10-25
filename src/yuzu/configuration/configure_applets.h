@@ -6,12 +6,17 @@
 
 #pragma once
 
+#include <QString>
 #include <QWidget>
 #include "yuzu/configuration/configuration_shared.h"
 
 class QCheckBox;
-class QLineEdit;
+class QComboBox;
 class QDateTimeEdit;
+class QLabel;
+class QLineEdit;
+class QPushButton;
+class QTimer;
 namespace Core {
 class System;
 }
@@ -40,6 +45,16 @@ private:
     void RetranslateUI();
 
     void Setup(const ConfigurationShared::Builder& builder);
+
+    /// Handheld Console Mode: the declaration UI (picker, Identify, status)
+    void RefreshBuiltinPicker();
+    void OnBuiltinPicked(int index);
+    void OnIdentifyPressed();
+    QComboBox* builtin_picker = nullptr;
+    QPushButton* builtin_identify = nullptr;
+    QLabel* builtin_status = nullptr;
+    QTimer* builtin_timer = nullptr;
+    QString builtin_signature;
 
     std::vector<std::function<void(bool)>> apply_funcs{};
 

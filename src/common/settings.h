@@ -202,6 +202,19 @@ struct Values {
 
     // Core
     SwitchableSetting<bool> use_multi_core{linkage, true, "use_multi_core", Category::Core};
+
+    /// Show the controller debug overlay (the real pad state plus the logic's actions)
+    SwitchableSetting<bool> console_debug_overlay{linkage, false, "console_debug_overlay",
+                                                  Category::LibraryApplet};
+
+    /// True when the user declared the handheld's own pad by hand (the picker or the
+    /// Identify button); the auto latch must not overwrite it
+    SwitchableSetting<bool> builtin_pad_manual{linkage, false, "builtin_pad_manual",
+                                               Category::Core};
+
+    /// The handheld's own pad identity, latched when Handheld Console Mode engages
+    SwitchableSetting<std::string> builtin_pad_identity{linkage, std::string{},
+                                                        "builtin_pad_identity", Category::Core};
     SwitchableSetting<MemoryLayout, true> memory_layout_mode{linkage,
                                                              MemoryLayout::Memory_4Gb,
                                                              "memory_layout_mode",

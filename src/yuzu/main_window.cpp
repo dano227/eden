@@ -10,6 +10,7 @@
 
 #include <boost/algorithm/string/split.hpp>
 #include "common/fs/path_util.h"
+#include "common/controller_console_state.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "frontend_common/settings_generator.h"
@@ -189,13 +190,19 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #endif
 
 #include "qt_common/gamemode.h"
+#include <QFontMetrics>
+#include <QImage>
+#include <QPainter>
+#include <QSettings>
+#include "common/controller_overlay_frame.h"
+#include "common/param_package.h"
 
 #ifdef _WIN32
 #include "common/windows/timer_resolution.h"
 #include "core/core_timing.h"
 
 #include <QPlatformSurfaceEvent>
-#include <QSettings>
+#include <fmt/format.h>
 #include <dwmapi.h>
 #include <windows.h>
 #ifdef _MSC_VER
@@ -1476,6 +1483,10 @@ void MainWindow::ConnectWidgetEvents() {
     connect(this, &MainWindow::EmulationStarting, this, &MainWindow::SoftwareKeyboardExit);
     connect(this, &MainWindow::EmulationStopping, this, &MainWindow::SoftwareKeyboardExit);
     connect(this, &MainWindow::EmulationStarting, this, &MainWindow::RefreshRuntimeCheats);
+    connect(&console_mode_timer, &QTimer::timeout, this, &MainWindow::ApplyConsoleControllerMode);
+    // 250ms: effectively instant to the user, negligible cost (the input reload only
+    // runs when the membership changes).
+    console_mode_timer.start(std::chrono::milliseconds{250});
     connect(this, &MainWindow::EmulationStopping, this, &MainWindow::ClearRuntimeCheats);
 
     connect(&status_bar_update_timer, &QTimer::timeout, this, &MainWindow::UpdateStatusBar);
@@ -1494,6 +1505,800 @@ QString CheatStateFile() {
 }
 
 } // Anonymous namespace
+
+namespace {
+
+/// The joystick API is shared with the input driver's threads (the rumble worker);
+/// SDL_LockJoysticks is the official guard for calling into it elsewhere.
+struct JoystickApiLock {
+    JoystickApiLock() {
+        SDL_LockJoysticks();
+    }
+    ~JoystickApiLock() {
+        SDL_UnlockJoysticks();
+    }
+};
+
+/// A pad's stable identity: its hardware serial when it reports one (survives battery
+/// swaps and reconnects), otherwise its model GUID. Two pads can legitimately share the
+/// fallback identity - that is fine, because slots are keyed by connection instance and
+/// this only matches returning pads to their own reservations.
+std::string PadIdentity(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return {};
+    }
+    const char* serial = SDL_GetJoystickSerial(js);
+    if (serial && serial[0]) {
+        std::string out{"serial:"};
+        out += serial;
+        SDL_CloseJoystick(js);
+        return out;
+    }
+    const SDL_GUID guid = SDL_GetJoystickGUID(js);
+    SDL_CloseJoystick(js);
+    char buf[33]{};
+    for (int i = 0; i < 16; ++i) {
+        unsigned byte = guid.data[i];
+        // Bytes 2-3 are a CRC of the controller NAME: it rewrites itself when the name
+        // rotates ("SteamDeck" <-> "Xbox" on the same pad), which is what made identities
+        // appear to migrate between physical pads. InputCommon zeroes these bytes too
+        // (SDLDriver::GetGUID): do the same, or identity can never be stable.
+        if (i == 2 || i == 3) {
+            byte = 0;
+        }
+        std::snprintf(buf + i * 2, 3, "%02x", byte);
+    }
+    return std::string{"guid:"} + buf;
+}
+
+/// A pad's display name (Xbox Controller, Steam Virtual Gamepad, ...).
+QString PadName(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return QStringLiteral("?");
+    }
+    const char* name = SDL_GetJoystickName(js);
+    QString out = name ? QString::fromUtf8(name) : QStringLiteral("?");
+    SDL_CloseJoystick(js);
+    return out;
+}
+
+/// True when the emu was launched through Steam: Steam Input is then in the picture and
+/// the pads it hands over are virtual ones. A direct launch has neither.
+bool LaunchedThroughSteam() {
+    static const bool launched = std::getenv("SteamGameId") != nullptr ||
+                                 std::getenv("SteamAppId") != nullptr;
+    return launched;
+}
+
+/// True for Steam Input's virtual pads. Their reported identity (GUID/serial) is not
+/// stable when pads cycle - Steam re-binds its virtual devices - so only Steam's own
+/// player index is trustworthy for them. Raw pads (real names) keep the identity
+/// machinery, and nothing changes when the emu is not launched through Steam.
+bool IsSteamVirtualPad(SDL_JoystickID id) {
+    if (!LaunchedThroughSteam()) {
+        return false;
+    }
+    // Steam Input rewrites every virtual pad's GUID to carry Valve's vendor (0x28DE,
+    // little-endian in bytes 4-5) whatever the real hardware is. The pad NAME is not
+    // usable here: the same instance is seen as "SteamDeck" and "Xbox" in one session.
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return false;
+    }
+    const SDL_GUID guid = SDL_GetJoystickGUID(js);
+    SDL_CloseJoystick(js);
+    return guid.data[4] == 0xDE && guid.data[5] == 0x28;
+}
+
+/// The OS device node of a pad (e.g. /dev/input/event5): sometimes the one identity a
+/// virtualization layer keeps stable. Empty where unsupported.
+QString PadPath(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return {};
+    }
+    const char* path = SDL_GetJoystickPath(js);
+    QString out = path ? QString::fromUtf8(path) : QString{};
+    SDL_CloseJoystick(js);
+    return out;
+}
+
+/// The hex body of an identity token (serial or guid), for tolerant matching against the
+/// input subsystem's own guid strings.
+/// The GUID key InputCommon uses for its device ids: the hex after "guid:" with bytes
+/// 2-3 (the controller-name CRC, which rewrites itself when the name rotates) zeroed,
+/// exactly like SDLDriver::GetGUID. Anything else never matches the settings tab.
+std::string StableGuidHex(const std::string& ident) {
+    if (ident.rfind("guid:", 0) != 0) {
+        return {};
+    }
+    std::string hex = ident.substr(5);
+    if (hex.size() >= 8) {
+        hex.replace(4, 4, "0000");
+    }
+    return hex;
+}
+
+std::string IdentityHex(const std::string& ident) {
+    std::string out;
+    for (char c : ident) {
+        if (std::isxdigit(static_cast<unsigned char>(c))) {
+            out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+    }
+    return out;
+}
+
+/// True while any button of a pad is held: the Identify handshake reads this.
+bool PadAnyButtonPressed(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return false;
+    }
+    bool pressed = false;
+    const int count = SDL_GetNumJoystickButtons(js);
+    for (int i = 0; i < count; ++i) {
+        pressed = pressed || SDL_GetJoystickButton(js, i);
+    }
+    SDL_CloseJoystick(js);
+    return pressed;
+}
+
+/// Steam's own player index for a pad (-1 when not assigned by Steam Input).
+int PadPlayerIndex(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return -1;
+    }
+    const int index = SDL_GetJoystickPlayerIndex(js);
+    SDL_CloseJoystick(js);
+    return index;
+}
+
+/// A pad's USB vendor id, under the same lock as the rest of the API use.
+Uint16 PadVendor(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return 0;
+    }
+    const Uint16 vendor = SDL_GetJoystickVendor(js);
+    SDL_CloseJoystick(js);
+    return vendor;
+}
+
+} // Anonymous namespace
+
+void MainWindow::PushConsoleEvent(const QString& line) {
+    // Events are ephemeral: they expire after a few seconds so the overlay stays readable
+    console_debug_events.emplace_back(QDateTime::currentMSecsSinceEpoch(), line);
+    while (console_debug_events.size() > 8) {
+        console_debug_events.pop_front();
+    }
+}
+
+void MainWindow::ApplyConsoleControllerMode() {
+    const auto mode = Settings::values.controller_applet_mode.GetValue();
+    const bool handheld = mode == Settings::AppletMode::HandheldConsoleMode;
+    const bool console = mode == Settings::AppletMode::ConsoleMode;
+    if (!handheld && !console) {
+        if (builtin_seen_first) {
+            // Leaving the mode forgets the latch: re-selecting it later re-detects
+            builtin_pad_id = 0;
+            builtin_identity.clear();
+            builtin_seen_first = false;
+            builtin_warned = false;
+            pad_slots.clear();
+            pad_identity.clear();
+            Settings::values.builtin_pad_identity.SetValue(std::string{});
+        }
+        return;
+    }
+
+    // The live set of gamepads. The map key is the connection instance (always unique:
+    // two pads can share a serial or GUID through Steam Input and must never collapse),
+    // and pad_identity records the stable identity used to reclaim slots.
+    std::map<u32, std::string> live;
+    {
+        const JoystickApiLock lock;
+        int count = 0;
+        SDL_JoystickID* ids = SDL_GetGamepads(&count);
+        for (int i = 0; i < count; ++i) {
+            live[ids[i]] = PadIdentity(ids[i]);
+        }
+        SDL_free(ids);
+    }
+
+    // The settings-tab names (InputCommon's display names) matched by identity, kept per
+    // identity so a departed pad can still be named in its Disconnected event.
+    std::map<std::string, std::vector<std::pair<int, QString>>> display_names;
+    if (input_subsystem) {
+        for (const auto& device : input_subsystem->GetInputDevices()) {
+            display_names[StableGuidHex("guid:" + device.Get("guid", ""))].emplace_back(
+                device.Get("port", 0), QString::fromStdString(device.Get("display", "")));
+        }
+        for (auto& [key, list] : display_names) {
+            std::sort(list.begin(), list.end());
+        }
+    }
+    // Identical pads share one GUID now, so the settings-style name ("Xbox One
+    // Controller 0") is picked by connect order within the GUID group - the same order
+    // InputCommon numbers its ports in.
+    const auto label_of = [&](u32 id, const std::string& ident) {
+        QString display;
+        const std::string key = StableGuidHex(ident);
+        const auto it = display_names.find(key);
+        if (it != display_names.end() && !it->second.empty()) {
+            size_t rank = 0;
+            for (const auto& [oid, oident] : live) {
+                if (oid < id && StableGuidHex(oident) == key) {
+                    ++rank;
+                }
+            }
+            const auto& list = it->second;
+            display = list[std::min(rank, list.size() - 1)].second;
+        }
+        return std::pair<QString, QString>{display, PadName(id)};
+    };
+    const auto names_of = [&](const std::string& ident) {
+        const auto it = pad_names.find(ident);
+        return it != pad_names.end()
+                   ? it->second
+                   : std::pair<QString, QString>{QStringLiteral("?"), QStringLiteral("?")};
+    };
+    for (const auto& [id, ident] : live) {
+        pad_names[ident] = label_of(id, ident);
+    }
+
+    // Publish the live pads to the settings UI, and service the Identify handshake: the
+    // next pad with a button held becomes the handheld's own by declaration, not guess.
+    {
+        auto& state = Common::GetControllerConsoleState();
+        std::scoped_lock lock{state.mutex};
+        state.pads.clear();
+        for (const auto& [id, ident] : live) {
+            state.pads.emplace_back(PadName(id).toStdString(), ident);
+        }
+        // A human tap is shorter than 250ms: poll fast while the Identify handshake is
+        // armed so a quick press cannot slip between the samples.
+        console_mode_timer.start(std::chrono::milliseconds{state.identify_armed ? 50 : 250});
+        if (state.identify_armed) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - state.identify_armed_at > std::chrono::seconds{15}) {
+                state.identify_armed = false;
+            } else {
+                for (const auto& [id, ident] : live) {
+                    if (PadAnyButtonPressed(id)) {
+                        state.identify_armed = false;
+                        builtin_pad_id = id;
+                        builtin_identity = ident;
+                        builtin_seen_first = true;
+                        builtin_warned = false;
+                        Settings::values.builtin_pad_identity.SetValue(ident);
+                        Settings::values.builtin_pad_manual.SetValue(true);
+                        LOG_INFO(Frontend, "console-mode: identify captured inst={} ident={}", id,
+                                 ident);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // PROBE: trace the pad identities and the slot mapping at every change
+    {
+        std::string trace;
+        for (const auto& [id, ident] : live) {
+            const auto it = pad_slots.find(id);
+            trace += fmt::format("\n  pad inst={} slot={} idx={} name={} path={} ident={}", id,
+                                 it == pad_slots.end() ? -1 : static_cast<int>(it->second),
+                                 PadPlayerIndex(id), PadName(id).toStdString(),
+                                 PadPath(id).toStdString(), ident);
+        }
+        LOG_INFO(Frontend, "console-mode: live={}{}, builtin={}{}", trace,
+                 live.empty() ? " (none)" : "", builtin_pad_id,
+                 builtin_seen_first ? "" : " (unlatched)");
+
+        static std::set<u32> traced_insts;
+        for (const auto& [id, ident] : live) {
+            if (traced_insts.insert(id).second) {
+                LOG_INFO(Frontend,
+                         "console-mode: pad connected inst={} ident={} name={} idx={}", id,
+                         ident, PadName(id).toStdString(), PadPlayerIndex(id));
+            }
+        }
+        for (auto it = traced_insts.begin(); it != traced_insts.end();) {
+            if (live.find(*it) == live.end()) {
+                LOG_INFO(Frontend, "console-mode: pad disconnected inst={}", *it);
+                it = traced_insts.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // The built-in's rules apply to exactly one pad: the one we can PROVE is the
+    // handheld's own. Evidence, strongest first:
+    //   1. connection continuity - the latched instance is still alive;
+    //   2. under Steam, player index 0 (the deck's pad holds it - verified in sessions);
+    //   3. a unique identity match (direct launches, where identities are honest).
+    // Anything else and the rules PAUSE. Safe beats clever - the lesson of the X-1
+    // pattern, where an impostor wearing the identity struck the wrong player row.
+    u32 builtin_match_id = 0;
+    bool builtin_valid = false;
+    if (builtin_pad_id && live.find(builtin_pad_id) != live.end()) {
+        builtin_match_id = builtin_pad_id;
+        builtin_valid = true;
+    } else if (!builtin_identity.empty()) {
+        int identity_count = 0;
+        u32 identity_holder = 0;
+        for (const auto& [id, ident] : live) {
+            if (ident == builtin_identity) {
+                ++identity_count;
+                identity_holder = id;
+            }
+        }
+        if (LaunchedThroughSteam()) {
+            int idx0_count = 0;
+            u32 idx0 = 0;
+            for (const auto& [id, ident] : live) {
+                if (PadPlayerIndex(id) == 0) {
+                    ++idx0_count;
+                    idx0 = id;
+                }
+            }
+            if (idx0_count == 1) {
+                builtin_match_id = idx0;
+                builtin_valid = true;
+                static u32 last_resolved = 0;
+                if (idx0 != last_resolved) {
+                    last_resolved = idx0;
+                    LOG_INFO(Frontend,
+                             "console-mode: builtin re-resolved inst={} by Steam index 0 "
+                             "(identity matched {} pads)",
+                             idx0, identity_count);
+                }
+            }
+        } else if (identity_count == 1) {
+            builtin_match_id = identity_holder;
+            builtin_valid = true;
+        }
+        if (!builtin_valid) {
+            static int last_count = -1;
+            if (identity_count != last_count) {
+                last_count = identity_count;
+                LOG_INFO(Frontend,
+                         "console-mode: builtin unresolved ({} pads match identity {}), "
+                         "built-in rules paused",
+                         identity_count, builtin_identity);
+            }
+        }
+    }
+    if (builtin_valid) {
+        builtin_pad_id = builtin_match_id;
+    }
+
+    if (handheld) {
+        if (live.empty() && !builtin_seen_first) {
+            // Handheld engaged with nothing connected: no handheld can be identified
+            Settings::values.controller_applet_mode.SetValue(Settings::AppletMode::ConsoleMode);
+            return;
+        }
+        const std::string stored{Settings::values.builtin_pad_identity.GetValue()};
+        const bool manual = Settings::values.builtin_pad_manual.GetValue();
+        if (manual) {
+            // A declaration is the truth: the picker or the Identify button chose this
+            // pad, so the engine obeys it and simply resolves its current instance.
+            builtin_identity = stored;
+            builtin_seen_first = true;
+            builtin_pad_id = 0;
+            if (builtin_valid) {
+                builtin_pad_id = builtin_match_id;
+            }
+        } else if (!builtin_pad_id && !stored.empty()) {
+            for (const auto& [id, ident] : live) {
+                if (ident == stored) {
+                    builtin_pad_id = id;
+                    builtin_identity = ident;
+                    builtin_seen_first = true;
+                    break;
+                }
+            }
+        }
+        if (!builtin_pad_id && !manual) {
+            auto handheld_candidate = [&]() -> u32 {
+                u32 found = 0;
+                int matches = 0;
+                for (const auto& [id, ident] : live) {
+                    if (IsSteamVirtualPad(id)) {
+                        // A virtual pad carries its launcher's vendor (Valve under Steam
+                        // Input), which is not evidence of handheld hardware at all
+                        continue;
+                    }
+                    const Uint16 vendor = PadVendor(id);
+                    const bool handheld_maker = vendor == 0x28DE || vendor == 0x17EF ||
+                                                vendor == 0x0B05 || vendor == 0x0DB0;
+                    if (handheld_maker) {
+                        ++matches;
+                        found = id;
+                    }
+                }
+                return matches == 1 ? found : 0;
+            };
+            const u32 candidate = handheld_candidate();
+            if (candidate) {
+                builtin_pad_id = candidate;
+                builtin_identity = live[candidate];
+                builtin_seen_first = true;
+                Settings::values.builtin_pad_identity.SetValue(live[candidate]);
+                builtin_warned = false;
+            } else if (live.size() == 1) {
+                builtin_pad_id = live.begin()->first;
+                builtin_identity = live.begin()->second;
+                builtin_seen_first = true;
+                Settings::values.builtin_pad_identity.SetValue(live.begin()->second);
+                // A lone Steam-virtual pad at the ritual is the handheld's own by
+                // definition (Steam Input wraps it); only raw unknown hardware gets the
+                // note, where the mislabel risk is real.
+                if (!builtin_warned && !IsSteamVirtualPad(live.begin()->first)) {
+                    QMessageBox::information(
+                        this, tr("Handheld Console Mode"),
+                        tr("Unknown handheld detected.\n\n"
+                           "Careful: a less popular controller could be labeled as a handheld."));
+                    builtin_warned = true;
+                }
+            } else if (!manual) {
+                Settings::values.controller_applet_mode.SetValue(Settings::AppletMode::ConsoleMode);
+                return;
+            }
+        }
+    }
+
+    auto& players = Settings::values.players.GetValue();
+    bool changed = false;
+
+    // A disconnected pad keeps its reservation so a quick blip (Steam virtual pads churn)
+    // reclaims its player - but not forever: after the grace period the slot is free again,
+    // so plugging a DIFFERENT controller cannot leave an earlier player dead for the rest
+    // of the session.
+    {
+        static std::map<u32, std::chrono::steady_clock::time_point> pad_last_seen;
+        const auto now = std::chrono::steady_clock::now();
+        for (const auto& [id, ident] : live) {
+            pad_last_seen[id] = now;
+        }
+        for (auto it = pad_slots.begin(); it != pad_slots.end();) {
+            const bool is_live = live.find(it->first) != live.end();
+            const auto seen = pad_last_seen.find(it->first);
+            const bool expired =
+                !is_live && seen != pad_last_seen.end() &&
+                now - seen->second > std::chrono::seconds{45};
+            if (expired) {
+                LOG_INFO(Frontend,
+                         "console-mode: reservation expired inst={} (slot {} free again)",
+                         it->first, it->second);
+                pad_identity.erase(it->first);
+                pad_last_seen.erase(it->first);
+                it = pad_slots.erase(it);
+                changed = true;
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // The handheld's own pad takes no player while external controllers are around: if it
+    // claimed one while alone, release it so the externals fill the range from player one.
+    // When the externals leave, the built-in claims slot one again - no tiptoeing needed.
+    if (handheld && builtin_valid && live.size() > 1) {
+        for (auto it = pad_slots.begin(); it != pad_slots.end();) {
+            if (it->first == builtin_match_id && pad_identity[it->first] == builtin_identity) {
+                pad_identity.erase(it->first);
+                it = pad_slots.erase(it);
+                changed = true;
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // New pads claim the lowest free slot; the handheld's own pad is skipped while
+    // others are around. The claim order follows the pads' player index where one exists:
+    // under Steam that is the ordering players expect, not instance-number luck.
+    std::set<int> used;
+    for (const auto& [id, slot] : pad_slots) {
+        used.insert(slot);
+    }
+    std::vector<u32> claim_order;
+    claim_order.reserve(live.size());
+    for (const auto& [id, ident] : live) {
+        claim_order.push_back(id);
+    }
+    std::sort(claim_order.begin(), claim_order.end(), [&live](u32 a, u32 b) {
+        const int ia = PadPlayerIndex(a);
+        const int ib = PadPlayerIndex(b);
+        if (ia != ib) {
+            return ia >= 0 && (ib < 0 || ia < ib);
+        }
+        return a < b;
+    });
+    for (const u32 id : claim_order) {
+        const std::string& ident = live.at(id);
+        // The built-in is excluded by IDENTITY: its connection instance changes when the
+        // pad cycles, and matching by instance let a returning built-in claim a slot (P4)
+        if (handheld && builtin_valid && id == builtin_match_id && live.size() > 1) {
+            continue;
+        }
+        // Steam Input pads used to take their RAW player index as the slot, but Steam's
+        // numbering is not a slot map: a session showed indices 1 and 2 landing on P2 and
+        // P3 with P1 left dead. The index orders the claims (the sort above); the slots
+        // always fill lowest-free below.
+        if (pad_slots.find(id) == pad_slots.end()) {
+            // Reclaim a dangling reservation when the identity matches - but only when it
+            // matches exactly one. Identical pads (several Xbox pads through Steam Input)
+            // share an identity, and guessing between their reservations shuffles the
+            // players; an ambiguous identity never gets guessed.
+            auto match = pad_slots.end();
+            int matches = 0;
+            for (auto it = pad_slots.begin(); it != pad_slots.end(); ++it) {
+                if (live.find(it->first) == live.end() && pad_identity[it->first] == ident) {
+                    match = it;
+                    ++matches;
+                }
+            }
+            if (matches == 1) {
+                LOG_INFO(Frontend,
+                         "console-mode: reclaim inst={} ident={} takes slot {} from dead inst={}",
+                         id, ident, match->second, match->first);
+                pad_slots[id] = match->second;
+                pad_identity[id] = ident;
+                pad_identity.erase(match->first);
+                pad_slots.erase(match);
+                changed = true;
+                continue;
+            }
+            if (matches > 1) {
+                LOG_INFO(Frontend,
+                         "console-mode: ambiguous reclaim inst={} ident={} ({} candidates), "
+                         "taking a fresh slot",
+                         id, ident, matches);
+            }
+            // Claim the lowest free slot
+            bool assigned = false;
+            for (int slot = 0; slot < static_cast<int>(players.size()) && !assigned; ++slot) {
+                if (used.find(slot) == used.end()) {
+                    LOG_INFO(Frontend, "console-mode: claim inst={} ident={} -> slot {}", id,
+                             ident, slot);
+                    pad_slots[id] = slot;
+                    pad_identity[id] = ident;
+                    used.insert(slot);
+                    assigned = true;
+                    changed = true;
+                }
+            }
+            if (!assigned) {
+                // Retire reservations (pads that left long ago) and retry, never a live
+                // pad's slot
+                for (auto it = pad_slots.begin(); it != pad_slots.end();) {
+                    const bool live_pad = live.find(it->first) != live.end();
+                    if (!live_pad) {
+                        pad_identity.erase(it->first);
+                        it = pad_slots.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                used.clear();
+                for (const auto& [k, slot] : pad_slots) {
+                    used.insert(slot);
+                }
+                for (int slot = 0; slot < static_cast<int>(players.size()); ++slot) {
+                    if (used.find(slot) == used.end()) {
+                        LOG_INFO(Frontend, "console-mode: claim inst={} ident={} -> slot {}", id,
+                                 ident, slot);
+                        pad_slots[id] = slot;
+                        pad_identity[id] = ident;
+                        used.insert(slot);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Pad-level events: an identity arriving or leaving. A pad that churns its connection
+    // instance keeps its identity and stays silent - only real arrivals and departures
+    // make the list.
+    {
+        std::set<std::string> live_idents;
+        for (const auto& [id, ident] : live) {
+            live_idents.insert(ident);
+        }
+        if (!prev_live_idents.empty()) {
+            for (const auto& [id, ident] : live) {
+                if (prev_live_idents.find(ident) == prev_live_idents.end()) {
+                    const auto it = pad_slots.find(id);
+                    if (it != pad_slots.end()) {
+                        const auto [display, raw] = label_of(id, ident);
+                        PushConsoleEvent(QStringLiteral("P%1 Connected : %2 : %3")
+                                             .arg(it->second + 1)
+                                             .arg(display)
+                                             .arg(raw));
+                        break;
+                    }
+                }
+            }
+            for (const std::string& ident : prev_live_idents) {
+                if (live_idents.find(ident) == live_idents.end()) {
+                    for (const auto& [pid, slot] : pad_slots) {
+                        const auto pit = pad_identity.find(pid);
+                        if (pit != pad_identity.end() && pit->second == ident) {
+                            const auto [display, raw] = names_of(ident);
+                            PushConsoleEvent(QStringLiteral("P%1 Disconnected : %2 : %3")
+                                                 .arg(slot + 1)
+                                                 .arg(display)
+                                                 .arg(raw));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        prev_live_idents = std::move(live_idents);
+    }
+
+    // The configuration follows identity: a pad that left keeps its reservation, so it
+    // reclaims its own player when it returns. Only the leaving player is deactivated.
+    for (int i = 0; i < static_cast<int>(players.size()); ++i) {
+        bool want = false;
+        for (const auto& [id, ident] : live) {
+            const auto it = pad_slots.find(id);
+            if (it != pad_slots.end() && it->second == i) {
+                want = true;
+                break;
+            }
+        }
+        if (players[i].connected != want) {
+            players[i].connected = want;
+            changed = true;
+            PushConsoleEvent(want ? QStringLiteral("P%1 Activated").arg(i + 1)
+                                  : QStringLiteral("P%1 Deactivated").arg(i + 1));
+        }
+    }
+
+    if (changed) {
+        std::string out;
+        for (int i = 0; i < static_cast<int>(players.size()); ++i) {
+            out += players[i].connected ? "1" : "0";
+        }
+
+        static std::string last_written;
+        if (out != last_written) {
+            for (size_t i = 0; i < out.size(); ++i) {
+                if (last_written.size() != out.size() || last_written[i] != out[i]) {
+                    LOG_INFO(Frontend, "console-mode: player {} {}", i + 1,
+                             out[i] == '1' ? "activated" : "deactivated");
+                }
+            }
+            last_written = out;
+        }
+        LOG_INFO(Frontend, "console-mode: players written={}", out);
+    }
+
+    // The activation contract: a live pad holds at most one slot, slots stay in range and
+    // never collide. If this ever logs, the engine has a real bug and the log is the proof.
+    {
+        std::set<int> seen_slots;
+        for (const auto& [id, slot] : pad_slots) {
+            const bool in_range = slot >= 0 && slot < static_cast<int>(players.size());
+            const bool unique = in_range && seen_slots.insert(slot).second;
+            if (live.find(id) != live.end() && (!in_range || !unique)) {
+                LOG_ERROR(Frontend,
+                          "console-mode: INVARIANT BROKEN inst={} slot={} in_range={} "
+                          "unique={} - two pads fighting over one player or a corrupt slot",
+                          id, slot, in_range, unique);
+            }
+        }
+    }
+
+    // The debug overlay is rendered INTO the presented frame (see UpdateRawImage in the
+    // present path): a Qt window can never composite over the game surface in gamescope,
+    // so the text is drawn here and alpha-blended into the frame before the GPU copy.
+    {
+        QStringList lines;
+        lines.append(QStringLiteral("Controller:"));
+        for (int i = 0; i < static_cast<int>(players.size()); ++i) {
+            if (!players[i].connected) {
+                continue;
+            }
+            QString display = QStringLiteral("?");
+            QString raw = QStringLiteral("?");
+            for (const auto& [id, slot] : pad_slots) {
+                if (slot == i && live.find(id) != live.end()) {
+                    const auto [d, r] = label_of(id, pad_identity[id]);
+                    display = d;
+                    raw = r;
+                    break;
+                }
+            }
+            const QString primary = display.isEmpty() ? raw : display;
+            lines.append(QStringLiteral("P%1: %2%3")
+                             .arg(i + 1)
+                             .arg(primary)
+                             .arg(display.isEmpty() ? QStringLiteral(" (?)")
+                                                    : QStringLiteral(" (%1)").arg(raw)));
+        }
+        lines.append(QString());
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        while (!console_debug_events.empty() &&
+               now - console_debug_events.front().first > 5000) {
+            console_debug_events.pop_front();
+        }
+        for (const auto& [when, e] : console_debug_events) {
+            lines.append(e);
+        }
+
+        auto& overlay = Common::GetControllerOverlayFrame();
+        static bool overlay_push_logged = false;
+        if (!overlay_push_logged) {
+            overlay_push_logged = true;
+            LOG_INFO(Frontend,
+                     "overlay: first push setting={} mode={} lines={}",
+                     Settings::values.console_debug_overlay.GetValue(),
+                     static_cast<int>(mode), static_cast<int>(lines.size()));
+        }
+        if (!Settings::values.console_debug_overlay.GetValue() ||
+            (!handheld && !console)) {
+            std::scoped_lock lock{overlay.mutex};
+            overlay.enabled = false;
+            ++overlay.version;
+        } else {
+            QFont font{QStringLiteral("monospace")};
+            font.setPointSize(9);
+            const QFontMetrics fm{font};
+            int width = 12;
+            for (const QString& line : lines) {
+                width = std::max(width, fm.horizontalAdvance(line) + 12);
+            }
+            const int height = 12 + fm.lineSpacing() * static_cast<int>(lines.size());
+            QImage image{width, height, QImage::Format_RGBA8888};
+            image.fill(QColor(0, 0, 0, 140));
+            QPainter painter{&image};
+            painter.setFont(font);
+            painter.setPen(Qt::white);
+            int y = 6 + fm.ascent();
+            for (const QString& line : lines) {
+                painter.drawText(6, y, line);
+                y += fm.lineSpacing();
+            }
+            painter.end();
+
+            std::scoped_lock lock{overlay.mutex};
+            overlay.width = static_cast<u32>(width);
+            overlay.height = static_cast<u32>(height);
+            overlay.pixels.resize(image.sizeInBytes());
+            std::memcpy(overlay.pixels.data(), image.constBits(), image.sizeInBytes());
+            overlay.enabled = true;
+            ++overlay.version;
+        }
+    }
+
+    if (!changed) {
+        return;
+    }
+    if (QtCommon::system && QtCommon::system->IsPoweredOn()) {
+        QtCommon::system->HIDCore().ReloadInputDevices();
+    }
+}
 
 void MainWindow::RefreshRuntimeCheats() {
     ClearRuntimeCheats();
@@ -1886,7 +2691,11 @@ bool MainWindow::LoadROM(const QString& filename, Service::AM::FrontendAppletPar
 
     QtCommon::system->SetFrontendAppletSet({
         std::make_unique<QtAmiiboSettings>(*this), // Amiibo Settings
-        (Settings::values.controller_applet_mode.GetValue() == Settings::AppletMode::Disabled)
+        // The console modes own the controllers and suppress the applet, like Disabled
+        (Settings::values.controller_applet_mode.GetValue() == Settings::AppletMode::Disabled ||
+         Settings::values.controller_applet_mode.GetValue() == Settings::AppletMode::ConsoleMode ||
+         Settings::values.controller_applet_mode.GetValue() ==
+             Settings::AppletMode::HandheldConsoleMode)
             ? nullptr
             : std::make_unique<QtControllerSelector>(*this), // Controller Selector
         std::make_unique<QtErrorDisplay>(*this),             // Error Display

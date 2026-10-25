@@ -535,6 +535,9 @@ void SDLDriver::InitJoystick(SDL_JoystickID joystick_id) {
                      [](const auto& joystick) { return !joystick->GetSDLJoystick(); });
 
     if (joystick_it != joystick_guid_list.end()) {
+        const int port = static_cast<int>(joystick_it - joystick_guid_list.begin());
+        LOG_INFO(Input, "input: attach guid={} port={} name={} (reusing a freed slot)",
+                 guid.RawString(), port, SDL_GetJoystickName(sdl_joystick));
         (*joystick_it)->SetSDLJoystick(sdl_joystick, sdl_gamecontroller);
         (*joystick_it)->EnableMotion();
         SetBattery((*joystick_it)->GetPadIdentifier(),
@@ -563,6 +566,8 @@ void SDLDriver::CloseJoystick(SDL_Joystick* sdl_joystick) {
                                           });
 
     if (joystick_it != joystick_guid_list.end()) {
+        LOG_INFO(Input, "input: detach guid={} port={}", guid.RawString(),
+                 static_cast<int>(joystick_it - joystick_guid_list.begin()));
         (*joystick_it)->SetSDLJoystick(nullptr, nullptr);
     }
 }
