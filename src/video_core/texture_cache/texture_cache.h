@@ -108,26 +108,27 @@ void TextureCache<P>::RunGarbageCollector() {
     const auto Configure = [&](bool allow_aggressive) {
         high_priority_mode = total_used_memory >= expected_memory;
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
-        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
+        // Sudachi's ladder: only genuinely idle images (120 ticks) when healthy, younger
+        // under pressure. The per-image protections hold until the critical level.
+        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 120ULL;
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
-        if (!Settings::values.aggressive_gc.GetValue()) --num_iterations;
+        --num_iterations;
         auto& image = slot_images[image_id];
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
         const bool must_download = IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
-        bool gc_logic = Settings::values.aggressive_gc.GetValue()
-          ? (!aggressive_mode && !high_priority_mode && (True(image.flags & ImageFlagBits::CostlyLoad) || must_download))
-          : ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download));
-        if (gc_logic) {
-            return false;
+        // Strong protections: costly images keep until critical, downloads until the
+        // high-priority level. This is what keeps games like Hades 2 from thrashing.
+        if ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) ||
+            (!high_priority_mode && must_download)) {
+            return num_iterations == 0;
         }
-        if (Settings::values.aggressive_gc.GetValue()) --num_iterations;
         if (must_download) {
             auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
             const auto copies = FullDownloadCopies(image.info);
@@ -147,15 +148,18 @@ void TextureCache<P>::RunGarbageCollector() {
             num_iterations >>= 1;
             high_priority_mode = false;
         }
-        return false;
+        return num_iterations == 0;
     };
     Configure(false);
-    lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    // The resumable sweep: each stale image is visited once and the sweep continues on
+    // later frames. No storm, no re-scanning protected images, no budget bookkeeping.
+    lru_cache.ForEachItemBelowResumable(frame_tick - ticks_to_destroy, Cleanup);
     if (total_used_memory >= critical_memory) {
         Configure(true);
-        lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+        lru_cache.ForEachItemBelowResumable(frame_tick - ticks_to_destroy, Cleanup);
     }
 }
+
 
 template <class P>
 void TextureCache<P>::TickFrame() {

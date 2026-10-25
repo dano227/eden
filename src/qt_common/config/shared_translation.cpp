@@ -270,8 +270,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, mp4_hack, tr("Insert Base 2 values for DESCRIPTOR_MAX_COUNT"),
            tr("8 to 2048. May fix performance and missing gfx."));
     INSERT(Settings, fix_bloom_effects, tr("Fix bloom effects"), tr("Removes bloom in Burnout."));
-    INSERT(Settings, aggressive_gc, tr("Enable Aggressive Garbage Collector"),
-           tr("Different logic for Garbage Collector. May improve or decrease performance."));
     INSERT(Settings, depth_clamp, tr("Depth Clamp"),
            tr("Enabling Toggle turns it ON for EDS0,1,2 and OFF for EDS3. Fixes broken fog in SMO EDS0,1,2 and TOTK Skybox on EDS3."));
 
@@ -418,6 +416,7 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
     translations->insert({Settings::EnumMetadata<Settings::VramUsageMode>::Index(),
                           {
                               PAIR(VramUsageMode, Conservative, tr("Conservative")),
+                              PAIR(VramUsageMode, Conservative6Gb, tr("Conservative (6 GB)")),
                               PAIR(VramUsageMode, Aggressive, tr("Aggressive")),
                           }});
     translations->insert(
