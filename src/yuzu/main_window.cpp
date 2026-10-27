@@ -1768,6 +1768,82 @@ void MainWindow::RestoreConsoleProfile() {
     console_profile.reset();
 }
 
+namespace {
+
+/// A binding's mapping without its device (guid, port): what an edit in the Controls tab
+/// changes, as opposed to the device routing that a console mode owns. Order- and
+/// float-format-insensitive, so the tab rewriting "0.5" as "0.500000" is no edit.
+std::string BindingMapping(const std::string& raw) {
+    if (raw.empty()) {
+        return {};
+    }
+    Common::ParamPackage param{raw};
+    // Only an SDL binding's guid/port is device routing; for other engines (a DSU server's
+    // address, say) they are the mapping itself
+    if (param.Get("engine", "") == "sdl") {
+        param.Erase("guid");
+        param.Erase("guid2");
+        param.Erase("port");
+    }
+    std::vector<std::string> fields;
+    std::string field;
+    for (const char c : param.Serialize() + ",") {
+        if (c != ',') {
+            field += c;
+            continue;
+        }
+        const auto colon = field.find(':');
+        if (colon != std::string::npos) {
+            const std::string value = field.substr(colon + 1);
+            char* end = nullptr;
+            const float number = std::strtof(value.c_str(), &end);
+            if (!value.empty() && end && *end == '\0') {
+                field = field.substr(0, colon + 1) + fmt::format("{}", number);
+            }
+        }
+        fields.push_back(field);
+        field.clear();
+    }
+    std::sort(fields.begin(), fields.end());
+    std::string out;
+    for (const auto& f : fields) {
+        out += f + ',';
+    }
+    return out;
+}
+
+/// Brings the edited mappings of one binding array into the profile's, keeping the profile's
+/// own device (guid, port) on SDL bindings: that device is what the user's profile drives
+/// outside the console modes. True when anything was taken.
+template <typename Array>
+bool MergeMappings(Array& profile, const Array& before, const Array& after) {
+    bool taken = false;
+    for (size_t i = 0; i < after.size(); ++i) {
+        if (BindingMapping(after[i]) == BindingMapping(before[i])) {
+            continue;
+        }
+        Common::ParamPackage edited{after[i]};
+        const Common::ParamPackage original{profile[i]};
+        if (!after[i].empty() && !profile[i].empty() && edited.Get("engine", "") == "sdl" &&
+            original.Get("engine", "") == "sdl") {
+            edited.Set("guid", original.Get("guid", ""));
+            edited.Set("port", original.Get("port", 0));
+            if (original.Has("guid2")) {
+                edited.Set("guid2", original.Get("guid2", ""));
+            } else {
+                edited.Erase("guid2");
+            }
+            profile[i] = edited.Serialize();
+        } else {
+            profile[i] = after[i];
+        }
+        taken = true;
+    }
+    return taken;
+}
+
+} // Anonymous namespace
+
 void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput, 10>& before) {
     if (!console_profile) {
         return;
@@ -1777,27 +1853,29 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
     for (size_t i = 0; i < after.size(); ++i) {
         const auto& a = after[i];
         const auto& b = before[i];
-        const bool edited = a.buttons != b.buttons || a.analogs != b.analogs ||
-                            a.motions != b.motions || a.controller_type != b.controller_type ||
-                            a.vibration_enabled != b.vibration_enabled ||
-                            a.vibration_strength != b.vibration_strength;
-        if (!edited) {
-            continue;
-        }
-        // The connected flags stay the engine's. An edit on the handheld's own pad goes to
-        // player one's set, the one that pad carries wherever it sits.
+        // The connected flags and the device routing stay the engine's: the engine keeps
+        // re-pointing bindings while the tab is open (the tab even switches the players to
+        // the global copy the engine drives), so only mapping changes count as edits. An edit
+        // on the handheld's own pad goes to player one's set, the one it carries everywhere.
         size_t target = i;
         const auto own = pad_slots.find(builtin_pad_id);
         if (builtin_pad_id && own != pad_slots.end() && own->second == static_cast<int>(i)) {
             target = 0;
         }
         auto& p = (*console_profile)[target];
-        p.buttons = a.buttons;
-        p.analogs = a.analogs;
-        p.motions = a.motions;
-        p.controller_type = a.controller_type;
-        p.vibration_enabled = a.vibration_enabled;
-        p.vibration_strength = a.vibration_strength;
+        bool edited = MergeMappings(p.buttons, b.buttons, a.buttons);
+        edited = MergeMappings(p.analogs, b.analogs, a.analogs) || edited;
+        edited = MergeMappings(p.motions, b.motions, a.motions) || edited;
+        if (a.controller_type != b.controller_type || a.vibration_enabled != b.vibration_enabled ||
+            a.vibration_strength != b.vibration_strength) {
+            p.controller_type = a.controller_type;
+            p.vibration_enabled = a.vibration_enabled;
+            p.vibration_strength = a.vibration_strength;
+            edited = true;
+        }
+        if (!edited) {
+            continue;
+        }
         LOG_INFO(Frontend, "console-mode: Controls edit on P{} kept in profile P{}", i + 1,
                  target + 1);
     }
@@ -2215,16 +2293,39 @@ void MainWindow::ApplyConsoleControllerMode() {
         // P3 with P1 left dead. The index orders the claims (the sort above); the slots
         // always fill lowest-free below.
         if (pad_slots.find(id) == pad_slots.end()) {
-            // Reclaim a dangling reservation when the identity matches - but only when it
-            // matches exactly one. Identical pads (several Xbox pads through Steam Input)
-            // share an identity, and guessing between their reservations shuffles the
-            // players; an ambiguous identity never gets guessed.
+            // Reclaim a dangling reservation when the identity matches. A unique match is the
+            // pad's own slot. Identical pads (several Xbox pads through Steam Input) share an
+            // identity, so which reservation is whose cannot be known - but skipping them all
+            // pushed returning pads behind the gaps (P2 and P3 left, came back as P5 and P6).
+            // An ambiguous pad takes the lowest of those reservations, or a lower free slot,
+            // like a console filling the first open player.
             auto match = pad_slots.end();
             int matches = 0;
             for (auto it = pad_slots.begin(); it != pad_slots.end(); ++it) {
                 if (live.find(it->first) == live.end() && pad_identity[it->first] == ident) {
-                    match = it;
+                    if (match == pad_slots.end() || it->second < match->second) {
+                        match = it;
+                    }
                     ++matches;
+                }
+            }
+            if (matches > 1) {
+                int lowest_free = -1;
+                for (int slot = 0; slot < static_cast<int>(players.size()); ++slot) {
+                    if (used.find(slot) == used.end()) {
+                        lowest_free = slot;
+                        break;
+                    }
+                }
+                if (lowest_free < 0 || match->second < lowest_free) {
+                    LOG_INFO(Frontend,
+                             "console-mode: ambiguous reclaim inst={} ident={} ({} candidates) "
+                             "takes the lowest, slot {} from dead inst={}",
+                             id, ident, matches, match->second, match->first);
+                    matches = 1;
+                } else {
+                    match = pad_slots.end();
+                    matches = 0;
                 }
             }
             if (matches == 1) {
@@ -2237,12 +2338,6 @@ void MainWindow::ApplyConsoleControllerMode() {
                 pad_slots.erase(match);
                 changed = true;
                 continue;
-            }
-            if (matches > 1) {
-                LOG_INFO(Frontend,
-                         "console-mode: ambiguous reclaim inst={} ident={} ({} candidates), "
-                         "taking a fresh slot",
-                         id, ident, matches);
             }
             // Claim the lowest free slot
             bool assigned = false;
@@ -2319,7 +2414,23 @@ void MainWindow::ApplyConsoleControllerMode() {
             }
             const int slot = it->second;
             const bool is_builtin = builtin_valid && id == builtin_match_id;
-            const auto& own = profile[is_builtin ? 0 : slot];
+            // A slot the user never bound a controller to (keyboard or empty, P6+ typically)
+            // would leave its pad dead: borrow the nearest lower external slot's set.
+            const auto has_sdl = [](const Settings::PlayerInput& p) {
+                return std::any_of(p.buttons.begin(), p.buttons.end(), [](const std::string& b) {
+                    return !b.empty() && Common::ParamPackage{b}.Get("engine", "") == "sdl";
+                });
+            };
+            int set_index = is_builtin ? 0 : slot;
+            if (!is_builtin && !has_sdl(profile[set_index])) {
+                for (int k = slot - 1; k >= 0; --k) {
+                    if (has_sdl(profile[k]) && (k > 0 || !builtin_valid || !handheld)) {
+                        set_index = k;
+                        break;
+                    }
+                }
+            }
+            const auto& own = profile[set_index];
             Settings::PlayerInput want = players[slot];
             want.buttons = own.buttons;
             want.analogs = own.analogs;
@@ -2346,7 +2457,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 player.motions = want.motions;
                 LOG_INFO(Frontend,
                          "console-mode: P{} <- inst={} guid={} port={} set=P{}{}", slot + 1, id,
-                         binding->first, binding->second, is_builtin ? 1 : slot + 1,
+                         binding->first, binding->second, set_index + 1,
                          is_builtin ? " (handheld)" : "");
                 changed = true;
             }
