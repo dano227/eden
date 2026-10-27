@@ -62,14 +62,17 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
              tr("The handheld's controls are player 1 only while no other controller is "
                 "connected."),
              Settings::AppletMode::HandheldConsoleMode);
-    add_mode(tr("Legacy Applet"),
-             tr("Players are set in each player's tab; games open Eden's controller window."),
-             Settings::AppletMode::HLE);
     add_mode(tr("Disabled"),
              tr("Players are set in each player's tab; games get them without a window."),
              Settings::AppletMode::Disabled);
+    add_mode(tr("Legacy Applet"),
+             tr("Players are set in each player's tab; games open Eden's controller window."),
+             Settings::AppletMode::HLE);
     frontend_layout->addStretch(1);
     mode_layout->addWidget(frontend_row);
+    mode_info = new QLabel(mode_box);
+    mode_info->setWordWrap(true);
+    mode_layout->addWidget(mode_info);
     layout->addWidget(mode_box);
 
     // Handheld Console Mode: declare the handheld's own controller instead of guessing it.
@@ -90,7 +93,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     layout->addWidget(builtin_row);
 
     // The players right now, as the engine assigned them
-    auto* now_box = new QGroupBox(tr("Players now"), this);
+    now_box = new QGroupBox(tr("Players now"), this);
     auto* now_layout = new QVBoxLayout(now_box);
     players_box = new QWidget(now_box);
     players_grid = new QGridLayout(players_box);
@@ -168,6 +171,18 @@ void ConfigurePlayerAssignment::ApplyConfiguration() {
 void ConfigurePlayerAssignment::UpdateModeUi() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     frontend_row->setVisible(mode->currentIndex() == 0);
+    // The automatic modes say so; the manual ones have no live players to show
+    const bool automatic = IsAutomatic(selected);
+    if (selected == Settings::AppletMode::HandheldConsoleMode) {
+        mode_info->setText(tr("Controller assignment is automatic. Connected controllers take "
+                              "priority over the handheld's built-in controls, which are used "
+                              "only when no other controller is connected."));
+    } else if (automatic) {
+        mode_info->setText(tr("Controller assignment is automatic. Each controller is assigned "
+                              "to the next available player when it connects."));
+    }
+    mode_info->setVisible(automatic);
+    now_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }

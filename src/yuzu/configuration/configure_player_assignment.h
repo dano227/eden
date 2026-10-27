@@ -45,6 +45,8 @@ private:
     QComboBox* mode = nullptr;
     QWidget* frontend_row = nullptr;
     QButtonGroup* frontend_modes = nullptr;
+    QLabel* mode_info = nullptr;
+    QWidget* now_box = nullptr;
 
     QWidget* builtin_row = nullptr;
     QComboBox* builtin_picker = nullptr;
