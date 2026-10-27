@@ -1726,6 +1726,15 @@ bool PadInputHeld(SDL_JoystickID id) {
     return held;
 }
 
+/// A short rumble pulse on a pad, if it supports rumble.
+void PadRumble(SDL_JoystickID id, Uint16 strength, Uint32 duration_ms) {
+    const JoystickApiLock lock;
+    if (SDL_Gamepad* pad = SDL_OpenGamepad(id)) {
+        SDL_RumbleGamepad(pad, strength, strength, duration_ms);
+        SDL_CloseGamepad(pad);
+    }
+}
+
 /// An SDL motion binding for a device, as InputCommon's own auto-mapping builds it.
 std::string SdlMotionParam(const std::string& guid, int port) {
     Common::ParamPackage param;
@@ -2831,11 +2840,10 @@ void MainWindow::ApplyConsoleControllerMode() {
                 if (slot != player || live.find(id) == live.end()) {
                     continue;
                 }
-                const JoystickApiLock lock;
-                if (SDL_Gamepad* pad = SDL_OpenGamepad(id)) {
-                    SDL_RumbleGamepad(pad, 0xC000, 0xC000, 250);
-                    SDL_CloseGamepad(pad);
-                }
+                // Sent twice: a single request through Steam's virtual pads is sometimes lost
+                const u32 pad = id;
+                PadRumble(pad, 0xC000, 300);
+                QTimer::singleShot(150, this, [pad] { PadRumble(pad, 0xC000, 200); });
                 break;
             }
         }

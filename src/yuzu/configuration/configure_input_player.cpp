@@ -907,6 +907,7 @@ void ConfigureInputPlayer::RefreshFromController() {
 }
 
 void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
+    ui->devicesGroup->setVisible(!locked);
     if (ui->groupConnectedController->isCheckable() == !locked) {
         return;
     }

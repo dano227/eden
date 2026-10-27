@@ -69,8 +69,8 @@ public:
     /// automatic player assignment re-pointing the player at another pad)
     void RefreshFromController();
 
-    /// While the players are assigned automatically, the player's connection is not the user's
-    /// to toggle: the tab hides its "connected" switch
+    /// While the players are assigned automatically, the player's connection and device are not
+    /// the user's to change: the tab hides its "connected" switch and its device choice
     void SetConnectionLocked(bool locked);
 
     /// Updates the list of controller profiles.

@@ -8,6 +8,7 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -393,11 +394,44 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     const bool in_effect = selected == Settings::values.controller_applet_mode.GetValue();
 
-    // Rebuild the rows when the players (or the pending swap) change; activity only restyles
+    // Like the overlay: a player's row pops in green when its controller connects, and turns
+    // red when the controller leaves before it is dropped
+    constexpr qint64 flash_ms = 1500;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (const auto& entry : players) {
+        auto& shown = shown_rows[entry.player];
+        if (shown.since == 0 || shown.gone != 0) {
+            shown.since = now;
+            shown.gone = 0;
+        }
+        shown.name = entry.name;
+    }
+    for (auto it = shown_rows.begin(); it != shown_rows.end();) {
+        const bool present = std::any_of(players.begin(), players.end(), [&](const auto& entry) {
+            return entry.player == it->first;
+        });
+        if (!present && it->second.gone == 0) {
+            it->second.gone = now;
+        }
+        if (it->second.gone != 0 && now - it->second.gone > flash_ms) {
+            it = shown_rows.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    const int last_player = players.empty() ? -1 : std::max_element(players.begin(),
+                                                                  players.end(),
+                                                                  [](const auto& a,
+                                                                     const auto& b) {
+                                                                      return a.player < b.player;
+                                                                  })->player;
+
+    // Rebuild the rows when they change; the colours only restyle them
     QString signature = QString::number(swap_from) + QLatin1Char(';');
-    for (const auto& row : players) {
-        signature += QString::number(row.player) + QLatin1Char(':') +
-                     QString::fromStdString(row.name) + QLatin1Char('|');
+    for (const auto& [player, shown] : shown_rows) {
+        signature += QString::number(player) + QLatin1Char(':') +
+                     QString::fromStdString(shown.name) + (shown.gone ? QStringLiteral("x") : QString{}) +
+                     QLatin1Char('|');
     }
     if (!handheld_has_player) {
         signature += QStringLiteral("h:") + QString::fromStdString(handheld_name);
@@ -411,8 +445,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         }
         player_rows.clear();
         row_players.clear();
-        for (const auto& entry : players) {
-            const int player = entry.player;
+        for (const auto& [player, entry] : shown_rows) {
             auto* row = new PlayerRow(player, players_box);
             row->setToolTip(tr("Click to rumble this controller. Hold, then drop on another "
                                "player to swap them."));
@@ -422,16 +455,17 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->setContentsMargins(4, 2, 4, 2);
             line->addWidget(new QLabel(QStringLiteral("P%1").arg(player + 1), row));
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
+            const bool live = entry.gone == 0;
 
             auto* up = new QPushButton(QStringLiteral("\u25B2"), row);
             up->setToolTip(tr("Swap with P%1").arg(player));
-            up->setEnabled(player > 0);
+            up->setEnabled(live && player > 0);
             connect(up, &QPushButton::clicked, this,
                     [this, player] { RequestSwap(player, player - 1); });
             line->addWidget(up);
             auto* down = new QPushButton(QStringLiteral("\u25BC"), row);
             down->setToolTip(tr("Swap with P%1").arg(player + 2));
-            down->setEnabled(player + 1 < MaxPlayers);
+            down->setEnabled(live && player < last_player);
             connect(down, &QPushButton::clicked, this,
                     [this, player] { RequestSwap(player, player + 1); });
             line->addWidget(down);
@@ -447,6 +481,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             } else {
                 swap->setText(tr("Swap with P%1").arg(swap_from + 1));
             }
+            swap->setEnabled(live);
             connect(swap, &QPushButton::clicked, this, [this, player] { OnSwapPressed(player); });
             line->addWidget(swap);
 
@@ -480,17 +515,35 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         }
     }
 
-    // A row lights while its controller has an input held: pressing a button shows which
-    // controller is which player
+    // Red while leaving; blue while its controller has an input held or was just clicked to
+    // rumble (pressing a button shows which controller is which player); green when new
+    const auto fill = [](const char* rgba) {
+        return QStringLiteral("QFrame#playerRow { background-color: rgba(%1); } "
+                              "QFrame#playerRow QLabel { color: white; }")
+            .arg(QString::fromLatin1(rgba));
+    };
     for (size_t k = 0; k < player_rows.size(); ++k) {
-        const auto it = std::find_if(players.begin(), players.end(), [&](const auto& row) {
-            return row.player == row_players[k];
-        });
-        const bool active = it != players.end() && it->active;
-        player_rows[k]->setStyleSheet(
-            active ? QStringLiteral("QFrame#playerRow { background-color: rgba(60, 120, 230, "
-                                    "190); } QFrame#playerRow QLabel { color: white; }")
-                   : QString{});
+        const int player = row_players[k];
+        const auto shown = shown_rows.find(player);
+        if (player < 0 || shown == shown_rows.end()) {
+            continue;
+        }
+        const auto entry = std::find_if(players.begin(), players.end(),
+                                        [&](const auto& row) { return row.player == player; });
+        const auto rumbled = rumbled_at.find(player);
+        const bool active = (entry != players.end() && entry->active) ||
+                            (rumbled != rumbled_at.end() && now - rumbled->second < 500);
+        QString style;
+        if (shown->second.gone != 0) {
+            style = fill("210, 60, 60, 190");
+        } else if (active) {
+            style = fill("60, 120, 230, 190");
+        } else if (now - shown->second.since < flash_ms) {
+            style = fill("60, 180, 90, 190");
+        }
+        if (player_rows[k]->styleSheet() != style) {
+            player_rows[k]->setStyleSheet(style);
+        }
     }
 
     if (!in_effect || (IsAutomatic(selected) && !engine_active)) {
@@ -553,6 +606,7 @@ void ConfigurePlayerAssignment::RequestSwap(int a, int b) {
 }
 
 void ConfigurePlayerAssignment::RequestRumble(int player) {
+    rumbled_at[player] = QDateTime::currentMSecsSinceEpoch();
     auto& state = Common::GetControllerConsoleState();
     std::scoped_lock lock{state.mutex};
     state.rumble_requests.push_back(player);
