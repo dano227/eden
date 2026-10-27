@@ -2069,6 +2069,13 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
     }
 }
 
+namespace {
+/// The green/red flashes blink four times a second for their 1.5 seconds
+bool BlinkOn(qint64 elapsed_ms) {
+    return elapsed_ms < 1500 && (elapsed_ms / 125) % 2 == 0;
+}
+} // Anonymous namespace
+
 void MainWindow::RenderControllerOverlay() {
     // A row lights blue while its controller has an input held, or for a moment after a tap
     // (so a tap between two polls still shows). Motion never lights it: a resting gyro reports
@@ -2122,14 +2129,20 @@ void MainWindow::RenderControllerOverlay() {
     QPainter painter{&image};
     painter.setFont(font);
     painter.setPen(Qt::white);
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    overlay_blink.clear();
     int y = 6 + fm.ascent();
     for (const auto& row : overlay_rows) {
+        const bool blink = row.flash != 0 && BlinkOn(now_ms - row.flash_since);
+        overlay_blink.push_back(blink);
         std::optional<QColor> fill;
         if (row.flash == 2) {
-            fill = QColor(210, 60, 60, 190);
+            if (blink) {
+                fill = QColor(210, 60, 60, 190);
+            }
         } else if (active.contains(row.pad)) {
             fill = QColor(60, 120, 230, 190);
-        } else if (row.flash == 1) {
+        } else if (blink) {
             fill = QColor(60, 180, 90, 190);
         }
         if (fill) {
@@ -2166,7 +2179,13 @@ void MainWindow::PollControllerActivity() {
             active.insert(row.pad);
         }
     }
-    if (active != overlay_active_pads) {
+    // ...and when a green/red flash blinks
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    std::vector<bool> blink;
+    for (const auto& row : overlay_rows) {
+        blink.push_back(row.flash != 0 && BlinkOn(now_ms - row.flash_since));
+    }
+    if (active != overlay_active_pads || blink != overlay_blink) {
         RenderControllerOverlay();
     }
 }
@@ -3137,7 +3156,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             const int flash = gone != 0 ? 2 : (now_ms - since < flash_ms ? 1 : 0);
             overlay_rows.push_back({i, QStringLiteral("P%1: %2").arg(i + 1).arg(
                                            overlay_row_name[i]),
-                                    gone != 0 ? 0u : pad, flash});
+                                    gone != 0 ? 0u : pad, flash, gone != 0 ? gone : since});
             if (gone == 0) {
                 tab_rows.push_back({i, overlay_row_name[i].toStdString(), false});
             }

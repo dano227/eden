@@ -15,6 +15,8 @@
 #include <QFrame>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPen>
+#include <QPainter>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -49,6 +51,7 @@ public:
     PlayerRow(int player_, QWidget* parent) : QFrame(parent), player{player_} {
         setObjectName(QStringLiteral("playerRow"));
         setAcceptDrops(true);
+        setCursor(Qt::OpenHandCursor);
         long_press.setSingleShot(true);
         long_press.setInterval(400);
         QObject::connect(&long_press, &QTimer::timeout, this, [this] { StartDrag(); });
@@ -87,10 +90,31 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event) override {
         if (event->mimeData()->hasFormat(QString::fromLatin1(PlayerMime))) {
             event->acceptProposedAction();
+            drop_hover = true;
+            update();
+        }
+    }
+
+    void dragLeaveEvent(QDragLeaveEvent* event) override {
+        drop_hover = false;
+        update();
+        QFrame::dragLeaveEvent(event);
+    }
+
+    void paintEvent(QPaintEvent* event) override {
+        QFrame::paintEvent(event);
+        if (drop_hover) {
+            // Where the dragged player lands
+            QPainter painter{this};
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(QPen(palette().highlight().color(), 2, Qt::DashLine));
+            painter.drawRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 4, 4);
         }
     }
 
     void dropEvent(QDropEvent* event) override {
+        drop_hover = false;
+        update();
         const int from = event->mimeData()->data(QString::fromLatin1(PlayerMime)).toInt();
         if (from != player && on_drop) {
             on_drop(from, player);
@@ -110,11 +134,15 @@ private:
         auto* drag = new QDrag(this);
         drag->setMimeData(mime);
         drag->setPixmap(grab());
+        drag->setHotSpot(press_pos);
+        setCursor(Qt::ClosedHandCursor);
         drag->exec(Qt::MoveAction);
+        setCursor(Qt::OpenHandCursor);
     }
 
     int player;
     bool pressed = false;
+    bool drop_hover = false;
     QPoint press_pos;
     QTimer long_press;
 };
@@ -455,7 +483,10 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             row->on_click = [this](int p) { RequestRumble(p); };
             row->on_drop = [this](int from, int to) { RequestSwap(from, to); };
             auto* line = new QHBoxLayout(row);
-            line->setContentsMargins(4, 2, 4, 2);
+            line->setContentsMargins(6, 3, 4, 3);
+            auto* grip = new QLabel(QStringLiteral("\u283F"), row);
+            grip->setToolTip(tr("Drag onto another player to swap"));
+            line->addWidget(grip);
             line->addWidget(new QLabel(QStringLiteral("P%1").arg(player + 1), row));
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
             const bool live = entry.gone == 0;
@@ -520,10 +551,18 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
 
     // Red while leaving; blue while its controller has an input held or was just clicked to
     // rumble (pressing a button shows which controller is which player); green when new
+    // Rows look like cards that can be picked up; a fill marks what is happening to them
+    const QString card = QStringLiteral(
+        "QFrame#playerRow { border: 1px solid palette(mid); border-radius: 4px; }");
     const auto fill = [](const char* rgba) {
-        return QStringLiteral("QFrame#playerRow { background-color: rgba(%1); } "
+        return QStringLiteral("QFrame#playerRow { border: 1px solid palette(mid); border-radius: "
+                              "4px; background-color: rgba(%1); } "
                               "QFrame#playerRow QLabel { color: white; }")
             .arg(QString::fromLatin1(rgba));
+    };
+    const auto blink_on = [now](qint64 since) {
+        const qint64 elapsed = now - since;
+        return elapsed < flash_ms && (elapsed / 125) % 2 == 0;
     };
     for (size_t k = 0; k < player_rows.size(); ++k) {
         const int player = row_players[k];
@@ -536,12 +575,14 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         const auto rumbled = rumbled_at.find(player);
         const bool active = (entry != players.end() && entry->active) ||
                             (rumbled != rumbled_at.end() && now - rumbled->second < 500);
-        QString style;
+        QString style = card;
         if (shown->second.gone != 0) {
-            style = fill("210, 60, 60, 190");
+            if (blink_on(shown->second.gone)) {
+                style = fill("210, 60, 60, 190");
+            }
         } else if (active) {
             style = fill("60, 120, 230, 190");
-        } else if (now - shown->second.since < flash_ms) {
+        } else if (blink_on(shown->second.since)) {
             style = fill("60, 180, 90, 190");
         }
         if (player_rows[k]->styleSheet() != style) {

@@ -599,8 +599,10 @@ private:
         QString text;
         u32 pad;
         int flash;
+        qint64 flash_since;
     };
     std::vector<OverlayRow> overlay_rows;
+    std::vector<bool> overlay_blink;
     std::set<u32> overlay_active_pads;
     /// Polls controller input faster than the assignment tick, for the blue highlight
     QTimer console_activity_timer;

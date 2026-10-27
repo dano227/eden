@@ -244,7 +244,8 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                     tab_since[i] = tabs_seeded ? now : now - flash_ms;
                     tab_gone[i] = 0;
                 }
-                if (now - tab_since[i] < flash_ms) {
+                const long long elapsed = now - tab_since[i];
+                if (elapsed < flash_ms && (elapsed / 125) % 2 == 0) {
                     label = QColor(40, 160, 70);
                 }
             } else {
@@ -252,7 +253,9 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                     tab_gone[i] = now;
                 }
                 if (tab_gone[i] != 0 && now - tab_gone[i] < flash_ms) {
-                    label = QColor(200, 50, 50);
+                    if (((now - tab_gone[i]) / 125) % 2 == 0) {
+                        label = QColor(200, 50, 50);
+                    }
                 } else {
                     shown = false;
                     tab_since[i] = 0;
@@ -286,7 +289,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             checkbox->blockSignals(false);
         }
     });
-    follow_timer->start(100);
+    follow_timer->start(50);
     ui->tabWidget->insertTab(0, assignment, tr("Controllers"));
     ui->tabWidget->setCurrentIndex(0);
 
