@@ -190,9 +190,9 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     mode_layout->addWidget(mode_info);
     layout->addWidget(mode_box);
 
-    // Handheld Console Mode: declare the handheld's own controller instead of guessing it.
+    // Assign Handheld Controller: declare the handheld's own controller instead of guessing it.
     // Shown for that mode only.
-    builtin_row = new QGroupBox(tr("Handheld Console Mode"), this);
+    builtin_row = new QGroupBox(tr("Assign Handheld Controller"), this);
     auto* builtin_layout = new QVBoxLayout(builtin_row);
     auto* picker_row = new QHBoxLayout();
     picker_row->addWidget(new QLabel(tr("Handheld's controller:"), builtin_row));

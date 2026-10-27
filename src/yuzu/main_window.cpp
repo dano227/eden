@@ -2673,7 +2673,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 // note, where the mislabel risk is real.
                 if (!builtin_warned && !IsSteamVirtualPad(live.begin()->first)) {
                     QMessageBox::information(
-                        this, tr("Handheld Console Mode"),
+                        this, tr("Assign Handheld Controller"),
                         tr("Unknown handheld detected.\n\n"
                            "Careful: a less popular controller could be labeled as a handheld."));
                     builtin_warned = true;
