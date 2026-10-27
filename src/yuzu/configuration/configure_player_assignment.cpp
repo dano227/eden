@@ -402,7 +402,17 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
         builtin_picker->blockSignals(blocked);
     }
 
-    if (stored.isEmpty() && detected_name.empty()) {
+    bool engine_active = false;
+    {
+        std::scoped_lock lock{state.mutex};
+        engine_active = state.engine_active;
+    }
+    if (engine_active && detected_name.empty() &&
+        Settings::values.controller_applet_mode.GetValue() ==
+            Settings::AppletMode::HandheldConsoleMode) {
+        builtin_status->setText(tr("Handheld controller not detected \u2014 working like Modern "
+                                   "until it is. Pick it above, or use Identify."));
+    } else if (stored.isEmpty() && detected_name.empty()) {
         builtin_status->setText(
             tr("Not set. Pick the handheld's controller above, or use Identify."));
     } else {

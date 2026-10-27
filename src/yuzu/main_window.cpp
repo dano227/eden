@@ -1671,6 +1671,44 @@ bool PadHasGyro(SDL_JoystickID id) {
     return gyro;
 }
 
+/// A pad's USB product id, under the same lock as the rest of the API use.
+Uint16 PadProduct(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return 0;
+    }
+    const Uint16 product = SDL_GetJoystickProduct(js);
+    SDL_CloseJoystick(js);
+    return product;
+}
+
+/// Makers of standalone controllers: never a handheld's built-in controls, even when alone
+bool IsControllerMaker(Uint16 vendor) {
+    switch (vendor) {
+    case 0x045E: // Microsoft
+    case 0x054C: // Sony
+    case 0x057E: // Nintendo
+    case 0x2DC8: // 8BitDo
+    case 0x046D: // Logitech
+    case 0x20D6: // PowerA
+    case 0x0E6F: // PDP
+    case 0x0F0D: // Hori
+    case 0x1532: // Razer
+    case 0x0738: // Mad Catz
+    case 0x146B: // Nacon
+    case 0x3537: // GameSir
+        return true;
+    default:
+        return false;
+    }
+}
+
+/// True for the controller types Steam reports for standalone controllers
+bool IsStandaloneControllerType(SDL_GamepadType type) {
+    return type != SDL_GAMEPAD_TYPE_UNKNOWN && type != SDL_GAMEPAD_TYPE_STANDARD;
+}
+
 /// Steam Input's handle for the physical controller behind a pad (0 when not under Steam
 /// Input, or not known). Steam's virtual pads are fixed slots that Steam refills in its own
 /// order, so this handle is the only thing that could tell which physical pad came back.
@@ -2532,7 +2570,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 count = 1;
                 holder = fit;
                 adopted = true;
-            } else if (want.empty() && live.size() == 1) {
+            } else if (want.empty() && live.size() == 1 &&
+                       !IsStandaloneControllerType(SDL_GetGamepadTypeForID(live.begin()->first))) {
                 count = 1;
                 holder = live.begin()->first;
             }
@@ -2597,11 +2636,6 @@ void MainWindow::ApplyConsoleControllerMode() {
     }
 
     if (handheld) {
-        if (live.empty() && !builtin_seen_first) {
-            // Handheld engaged with nothing connected: no handheld can be identified
-            Settings::values.controller_applet_mode.SetValue(Settings::AppletMode::ConsoleMode);
-            return;
-        }
         const std::string stored{Settings::values.builtin_pad_identity.GetValue()};
         const bool manual = Settings::values.builtin_pad_manual.GetValue();
         if (manual) {
@@ -2630,8 +2664,8 @@ void MainWindow::ApplyConsoleControllerMode() {
         // direct launches' identity and must not take a Steam pad's)
         if (!builtin_pad_id && !manual && !LaunchedThroughSteam()) {
             auto handheld_candidate = [&]() -> u32 {
-                u32 found = 0;
-                int matches = 0;
+                std::vector<u32> makers;
+                std::vector<u32> decks;
                 for (const auto& [id, ident] : live) {
                     if (IsSteamVirtualPad(id)) {
                         // A virtual pad carries its launcher's vendor (Valve under Steam
@@ -2639,14 +2673,19 @@ void MainWindow::ApplyConsoleControllerMode() {
                         continue;
                     }
                     const Uint16 vendor = PadVendor(id);
-                    const bool handheld_maker = vendor == 0x28DE || vendor == 0x17EF ||
-                                                vendor == 0x0B05 || vendor == 0x0DB0;
-                    if (handheld_maker) {
-                        ++matches;
-                        found = id;
+                    if (vendor == 0x28DE || vendor == 0x17EF || vendor == 0x0B05 ||
+                        vendor == 0x0DB0) {
+                        makers.push_back(id);
+                        // Valve also makes standalone controllers: the deck's own wins
+                        if (vendor == 0x28DE && PadProduct(id) == 0x1205) {
+                            decks.push_back(id);
+                        }
                     }
                 }
-                return matches == 1 ? found : 0;
+                if (makers.size() == 1) {
+                    return makers.front();
+                }
+                return decks.size() == 1 ? decks.front() : 0;
             };
             const u32 candidate = handheld_candidate();
             // A pad identified here is the handheld's own from this very tick on: the claims
@@ -2661,7 +2700,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 builtin_warned = false;
                 builtin_match_id = candidate;
                 builtin_valid = true;
-            } else if (live.size() == 1) {
+            } else if (live.size() == 1 && !IsControllerMaker(PadVendor(live.begin()->first))) {
                 builtin_match_id = live.begin()->first;
                 builtin_valid = true;
                 builtin_pad_id = live.begin()->first;
@@ -2678,10 +2717,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                            "Careful: a less popular controller could be labeled as a handheld."));
                     builtin_warned = true;
                 }
-            } else if (!manual) {
-                Settings::values.controller_applet_mode.SetValue(Settings::AppletMode::ConsoleMode);
-                return;
             }
+            // Nothing identified: this tick works like Modern, and the mode stays chosen
+            // (the next tick looks again, e.g. once the pads have enumerated)
         }
     }
 
