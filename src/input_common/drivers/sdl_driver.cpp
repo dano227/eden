@@ -450,6 +450,14 @@ std::shared_ptr<SDLJoystick> SDLDriver::GetSDLJoystickBySDLID(SDL_JoystickID sdl
     return *vec_it;
 }
 
+std::optional<std::pair<std::string, int>> SDLDriver::GetBindingForSDLID(SDL_JoystickID sdl_id) {
+    const auto joystick = GetSDLJoystickBySDLID(sdl_id);
+    if (!joystick) {
+        return std::nullopt;
+    }
+    return std::pair{joystick->GetGUID().RawString(), joystick->GetPort()};
+}
+
 std::shared_ptr<SDLJoystick> SDLDriver::GetSDLJoystickByGamepadID(SDL_JoystickID sdl_id) {
     auto* const sdl_gamepad = SDL_GetGamepadFromID(sdl_id);
     if (sdl_gamepad == nullptr) {

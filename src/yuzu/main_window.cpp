@@ -1675,6 +1675,36 @@ Uint16 PadVendor(SDL_JoystickID id) {
     return vendor;
 }
 
+/// Points every SDL binding of a player at one device (guid + port), leaving keyboard and
+/// other engines alone. Bindings address pads by (guid, port), never by slot, so this is
+/// what makes a slot's pad the one that actually drives the player. True when it changed.
+bool RouteSdlBindings(Settings::PlayerInput& player, const std::string& guid, int port) {
+    bool routed = false;
+    const auto route = [&](auto& params) {
+        for (std::string& raw : params) {
+            Common::ParamPackage param{raw};
+            if (param.Get("engine", "") != "sdl") {
+                continue;
+            }
+            const std::string old_guid = param.Get("guid", "");
+            if (old_guid == guid && param.Get("port", -1) == port) {
+                continue;
+            }
+            param.Set("guid", guid);
+            param.Set("port", port);
+            if (param.Has("guid2") && param.Get("guid2", "") == old_guid) {
+                param.Set("guid2", guid);
+            }
+            raw = param.Serialize();
+            routed = true;
+        }
+    };
+    route(player.buttons);
+    route(player.analogs);
+    route(player.motions);
+    return routed;
+}
+
 } // Anonymous namespace
 
 void MainWindow::PushConsoleEvent(const QString& line) {
@@ -2111,6 +2141,30 @@ void MainWindow::ApplyConsoleControllerMode() {
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    // Route each live pad's player to that pad. The slot map alone is not the routing: the
+    // profile binds player N to whatever (guid, port) it was mapped with, and the driver's
+    // ports follow attach order with freed ports reused - so a slot's pad and the pad that
+    // drives the player drifted apart (P1 kept the deck while the Xbox pad sat on a dead
+    // P2). A pad the driver has not opened yet is retried next tick.
+    if (input_subsystem) {
+        for (const auto& [id, ident] : live) {
+            const auto it = pad_slots.find(id);
+            if (it == pad_slots.end() || it->second < 0 ||
+                it->second >= static_cast<int>(players.size())) {
+                continue;
+            }
+            const auto binding = input_subsystem->GetSDLBinding(id);
+            if (!binding) {
+                continue;
+            }
+            if (RouteSdlBindings(players[it->second], binding->first, binding->second)) {
+                LOG_INFO(Frontend, "console-mode: route P{} -> inst={} guid={} port={}",
+                         it->second + 1, id, binding->first, binding->second);
+                changed = true;
             }
         }
     }

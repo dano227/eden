@@ -8,6 +8,8 @@
 
 #include <atomic>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include "common/container/unordered_map.h"
 
@@ -44,6 +46,10 @@ public:
     /// Get the nth joystick with the corresponding GUID
     std::shared_ptr<SDLJoystick> GetSDLJoystickBySDLID(SDL_JoystickID sdl_id);
     std::shared_ptr<SDLJoystick> GetSDLJoystickByGamepadID(SDL_JoystickID sdl_id);
+
+    /// The guid and port that bindings use to address this SDL instance, if the driver has it
+    /// open. Must not be called while holding SDL_LockJoysticks (the driver locks its map).
+    std::optional<std::pair<std::string, int>> GetBindingForSDLID(SDL_JoystickID sdl_id);
 
     /**
      * Check how many identical joysticks (by guid) were connected before the one with sdl_id and so
