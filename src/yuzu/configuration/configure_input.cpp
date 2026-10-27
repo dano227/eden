@@ -30,6 +30,8 @@
 #include <vector>
 #include <algorithm>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QDateTime>
 #include "yuzu/configuration/configure_input_player.h"
 #include "yuzu/configuration/configure_motion_touch.h"
 #include "yuzu/configuration/configure_ringcon.h"
@@ -191,19 +193,48 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
              parent = parent->parentWidget()) {
             tabs = qobject_cast<QTabWidget*>(parent);
         }
+        // A tab that appears flashes its label green; one whose controller left turns red for a
+        // moment before it hides
+        constexpr long long flash_ms = 1500;
+        const long long now = QDateTime::currentMSecsSinceEpoch();
         for (std::size_t i = 0; i < player_tabs.size(); ++i) {
-            const bool shown =
-                !automatic || (engine_active && std::find(active_players.begin(),
-                                                          active_players.end(),
-                                                          static_cast<int>(i)) !=
-                                                    active_players.end());
+            const bool assigned =
+                engine_active && std::find(active_players.begin(), active_players.end(),
+                                           static_cast<int>(i)) != active_players.end();
+            bool shown = true;
+            QColor label;
+            if (!automatic) {
+                tab_since[i] = 0;
+                tab_gone[i] = 0;
+            } else if (assigned) {
+                if (tab_since[i] == 0 || tab_gone[i] != 0) {
+                    tab_since[i] = tabs_seeded ? now : now - flash_ms;
+                    tab_gone[i] = 0;
+                }
+                if (now - tab_since[i] < flash_ms) {
+                    label = QColor(40, 160, 70);
+                }
+            } else {
+                if (tab_since[i] != 0 && tab_gone[i] == 0) {
+                    tab_gone[i] = now;
+                }
+                if (tab_gone[i] != 0 && now - tab_gone[i] < flash_ms) {
+                    label = QColor(200, 50, 50);
+                } else {
+                    shown = false;
+                    tab_since[i] = 0;
+                    tab_gone[i] = 0;
+                }
+            }
             if (tabs) {
                 if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
                     tabs->setTabVisible(index, shown);
+                    tabs->tabBar()->setTabTextColor(index, label);
                 }
             }
             player_controllers[i]->SetConnectionLocked(automatic);
         }
+        tabs_seeded = true;
         ui->connectedControllers->setVisible(!automatic);
 
         if (generation == followed_generation) {
@@ -222,7 +253,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             checkbox->blockSignals(false);
         }
     });
-    follow_timer->start(250);
+    follow_timer->start(100);
     ui->tabWidget->insertTab(0, assignment, tr("Controllers"));
     ui->tabWidget->setCurrentIndex(0);
 

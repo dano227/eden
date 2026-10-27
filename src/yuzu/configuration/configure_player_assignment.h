@@ -81,6 +81,7 @@ private:
     std::map<int, ShownRow> shown_rows;
     /// When each player's row was clicked to rumble (blue for a moment)
     std::map<int, long long> rumbled_at;
+    bool rows_seeded = false;
     std::function<void(int)> open_player_tab;
 
     QTimer* timer = nullptr;

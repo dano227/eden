@@ -81,6 +81,11 @@ private:
     /// redrawn when it reloads the controllers while the dialog is open
     QTimer* follow_timer = nullptr;
     unsigned long long followed_generation = 0;
+    /// Per player tab: when it appeared (green label for a moment) and when its controller
+    /// left (red label for a moment, then hidden); seeded without a flash when the dialog opens
+    std::array<long long, 8> tab_since{};
+    std::array<long long, 8> tab_gone{};
+    bool tabs_seeded = false;
     std::array<QWidget*, 8> player_tabs{};
     // Checkboxes representing the "Connected Controllers".
     std::array<QCheckBox*, 8> connected_controller_checkboxes{};

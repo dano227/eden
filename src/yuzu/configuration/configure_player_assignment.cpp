@@ -402,11 +402,13 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     for (const auto& entry : players) {
         auto& shown = shown_rows[entry.player];
         if (shown.since == 0 || shown.gone != 0) {
-            shown.since = now;
+            // The players already there when the tab opens are not new
+            shown.since = rows_seeded ? now : now - flash_ms;
             shown.gone = 0;
         }
         shown.name = entry.name;
     }
+    rows_seeded = rows_seeded || engine_active;
     for (auto it = shown_rows.begin(); it != shown_rows.end();) {
         const bool present = std::any_of(players.begin(), players.end(), [&](const auto& entry) {
             return entry.player == it->first;
