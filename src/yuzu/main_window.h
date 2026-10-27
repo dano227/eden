@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTimer>
+#include <array>
 #include <chrono>
 #include <deque>
 #include <map>
@@ -578,10 +579,6 @@ private:
     /// connection instance -> stable identity (serial, else model GUID), for matching a
     /// returning pad that comes back under a new instance
     std::map<u32, std::string> pad_identity;
-    /// connection instance -> (settings-tab name, raw name), for naming events
-    std::map<std::string, std::pair<QString, QString>> pad_names;
-    /// identities live last tick, for arrival/departure events (churn is silent)
-    std::set<std::string> prev_live_idents;
     /// The handheld's own pad (connection instance): never a player while other pads are
     /// connected
     u32 builtin_pad_id = 0;
@@ -591,9 +588,12 @@ private:
     bool builtin_seen_first = false;
     /// Warn once per engagement when the built-in cannot be identified
     bool builtin_warned = false;
-    /// Debug overlay + event trace for comparing the logic against the real state
-    std::deque<std::pair<qint64, QString>> console_debug_events;
-    void PushConsoleEvent(const QString& line);
+    /// Overlay rows per player: when the row appeared (green for a moment), when its pad
+    /// left (red for a moment, then gone), and the name it shows
+    std::array<qint64, 10> overlay_row_since{};
+    std::array<qint64, 10> overlay_row_gone{};
+    std::array<QString, 10> overlay_row_name{};
+    std::chrono::steady_clock::time_point overlay_last_tick{};
     /// The user's own players (bindings, types, connected flags) while a console mode drives
     /// them: the binding sets each pad carries come from here, the config file only ever
     /// sees this, and leaving the mode puts it back

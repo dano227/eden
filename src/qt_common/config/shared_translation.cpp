@@ -30,10 +30,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
 
     // A setting can be ignored by giving it a blank name
 
-    INSERT(Settings, console_debug_overlay, tr("Controller Debug Overlay"),
-           tr("Shows the connected controllers and the console logic's actions in the top "
-              "right of the game window."));
+    // Toggled from View > Show Controller Overlay
+    INSERT(Settings, console_debug_overlay, QString(), QString());
     INSERT(Settings, builtin_pad_identity, QString(), QString());
+    INSERT(Settings, builtin_pad_steam_handle, QString(), QString());
     INSERT(Settings, builtin_pad_manual, QString(), QString());
 
     // Applets

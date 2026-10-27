@@ -1410,6 +1410,8 @@ void MainWindow::RestoreUIState() {
 
     ui->action_Show_Performance_Overlay->setChecked(
         UISettings::values.show_perf_overlay.GetValue());
+    ui->action_Show_Controller_Overlay->setChecked(
+        Settings::values.console_debug_overlay.GetValue());
     if (perf_overlay)
         perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
     Debugger::ToggleConsole();
@@ -1705,6 +1707,25 @@ Uint64 PadSteamHandle(SDL_JoystickID id) {
     return handle;
 }
 
+/// True while a pad has an input held: any button, or a stick or trigger past half travel.
+bool PadInputHeld(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Gamepad* pad = SDL_OpenGamepad(id);
+    if (!pad) {
+        return false;
+    }
+    bool held = false;
+    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && !held; ++b) {
+        held = SDL_GetGamepadButton(pad, static_cast<SDL_GamepadButton>(b));
+    }
+    for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT && !held; ++a) {
+        const Sint16 value = SDL_GetGamepadAxis(pad, static_cast<SDL_GamepadAxis>(a));
+        held = value > 16384 || value < -16384;
+    }
+    SDL_CloseGamepad(pad);
+    return held;
+}
+
 /// An SDL motion binding for a device, as InputCommon's own auto-mapping builds it.
 std::string SdlMotionParam(const std::string& guid, int port) {
     Common::ParamPackage param;
@@ -1746,14 +1767,6 @@ bool RouteSdlBindings(Settings::PlayerInput& player, const std::string& guid, in
 }
 
 } // Anonymous namespace
-
-void MainWindow::PushConsoleEvent(const QString& line) {
-    // Events are ephemeral: they expire after a few seconds so the overlay stays readable
-    console_debug_events.emplace_back(QDateTime::currentMSecsSinceEpoch(), line);
-    while (console_debug_events.size() > 8) {
-        console_debug_events.pop_front();
-    }
-}
 
 void MainWindow::SaveAllConfigValues() {
     if (!console_profile) {
@@ -2101,8 +2114,7 @@ void MainWindow::ApplyConsoleControllerMode() {
 
     // The settings-tab names: the Controls tab lists InputCommon's devices by (guid, port),
     // so the name is the one of the device this pad is bound as - the same text the user
-    // picks in that tab, not a guess by connect order. Kept per identity so a departed
-    // pad can still be named in its Disconnected event.
+    // picks in that tab, not a guess by connect order.
     std::vector<Common::ParamPackage> input_devices;
     if (input_subsystem) {
         input_devices = input_subsystem->GetInputDevices();
@@ -2123,15 +2135,6 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
         return std::pair<QString, QString>{display, PadName(id)};
     };
-    const auto names_of = [&](const std::string& ident) {
-        const auto it = pad_names.find(ident);
-        return it != pad_names.end()
-                   ? it->second
-                   : std::pair<QString, QString>{QStringLiteral("?"), QStringLiteral("?")};
-    };
-    for (const auto& [id, ident] : live) {
-        pad_names[ident] = label_of(id, ident);
-    }
 
     // PROBE: trace the pad identities and the slot mapping at every change
     {
@@ -2632,45 +2635,6 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
-    // Pad-level events: an identity arriving or leaving. A pad that churns its connection
-    // instance keeps its identity and stays silent - only real arrivals and departures
-    // make the list.
-    {
-        std::set<std::string> live_idents;
-        for (const auto& [id, ident] : live) {
-            live_idents.insert(ident);
-        }
-        if (!prev_live_idents.empty()) {
-            for (const auto& [id, ident] : live) {
-                if (prev_live_idents.find(ident) == prev_live_idents.end()) {
-                    const auto it = pad_slots.find(id);
-                    if (it != pad_slots.end()) {
-                        const auto [display, raw] = label_of(id, ident);
-                        PushConsoleEvent(QStringLiteral("P%1 Connected : %2")
-                                             .arg(it->second + 1)
-                                             .arg(display.isEmpty() ? raw : display));
-                        break;
-                    }
-                }
-            }
-            for (const std::string& ident : prev_live_idents) {
-                if (live_idents.find(ident) == live_idents.end()) {
-                    for (const auto& [pid, slot] : pad_slots) {
-                        const auto pit = pad_identity.find(pid);
-                        if (pit != pad_identity.end() && pit->second == ident) {
-                            const auto [display, raw] = names_of(ident);
-                            PushConsoleEvent(QStringLiteral("P%1 Disconnected : %2")
-                                                 .arg(slot + 1)
-                                                 .arg(display.isEmpty() ? raw : display));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        prev_live_idents = std::move(live_idents);
-    }
-
     // The configuration follows identity: a pad that left keeps its reservation, so it
     // reclaims its own player when it returns. Only the leaving player is deactivated.
     for (int i = 0; i < static_cast<int>(players.size()); ++i) {
@@ -2685,8 +2649,6 @@ void MainWindow::ApplyConsoleControllerMode() {
         if (players[i].connected != want) {
             players[i].connected = want;
             changed = true;
-            PushConsoleEvent(want ? QStringLiteral("P%1 Activated").arg(i + 1)
-                                  : QStringLiteral("P%1 Deactivated").arg(i + 1));
         }
     }
 
@@ -2729,43 +2691,65 @@ void MainWindow::ApplyConsoleControllerMode() {
     // present path): a Qt window can never composite over the game surface in gamescope,
     // so the text is drawn here and alpha-blended into the frame before the GPU copy.
     {
+        // One row per player: it pops in green when its pad connects, turns red when the
+        // pad leaves and then goes, and lights blue while that pad has an input held (or for
+        // one refresh after a tap shorter than the 250ms tick). Motion never lights it: a
+        // resting gyro reports constant noise. The name drops InputCommon's port number,
+        // which shifts whenever Steam moves a controller to another virtual pad.
+        constexpr qint64 flash_ms = 1500;
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        const auto now_tick = std::chrono::steady_clock::now();
+        static const QRegularExpression port_number{
+            QStringLiteral(" \\d+(?=( \\(Steam virtual\\))?$)")};
         QStringList lines;
-        std::set<int> lit_lines;
-        lines.append(QStringLiteral("Controller:"));
+        std::map<int, QColor> fills;
         for (int i = 0; i < static_cast<int>(players.size()); ++i) {
-            if (!players[i].connected) {
-                continue;
-            }
-            QString name = QStringLiteral("?");
-            bool active = false;
+            u32 pad = 0;
             for (const auto& [id, slot] : pad_slots) {
                 if (slot == i && live.find(id) != live.end()) {
-                    const auto [display, raw] = label_of(id, pad_identity[id]);
-                    name = display.isEmpty() ? raw : display;
-                    // Lit for a moment after a deliberate input on that pad (buttons, d-pad,
-                    // a stick or trigger pushed past half). Motion never lights it: a resting
-                    // gyro reports constant noise and would keep the player lit.
-                    const auto last = input_subsystem ? input_subsystem->GetSDLLastActivity(id)
-                                                      : std::nullopt;
-                    active = last && std::chrono::steady_clock::now() - *last <
-                                         std::chrono::milliseconds{350};
+                    pad = id;
                     break;
                 }
             }
-            if (active) {
-                lit_lines.insert(static_cast<int>(lines.size()));
+            auto& since = overlay_row_since[i];
+            auto& gone = overlay_row_gone[i];
+            if (players[i].connected && pad) {
+                const auto [display, raw] = label_of(pad, std::string{});
+                QString name = display.isEmpty() ? raw : display;
+                name.remove(port_number);
+                overlay_row_name[i] = name;
+                if (since == 0 || gone != 0) {
+                    since = now_ms;
+                    gone = 0;
+                }
+            } else if (since != 0 && gone == 0) {
+                gone = now_ms;
             }
-            lines.append(QStringLiteral("P%1: %2").arg(i + 1).arg(name));
+            if (since == 0) {
+                continue;
+            }
+            if (gone != 0 && now_ms - gone > flash_ms) {
+                since = 0;
+                gone = 0;
+                continue;
+            }
+            const int row = static_cast<int>(lines.size());
+            lines.append(QStringLiteral("P%1: %2").arg(i + 1).arg(overlay_row_name[i]));
+            if (gone != 0) {
+                fills[row] = QColor(210, 60, 60, 190);
+                continue;
+            }
+            const auto last =
+                input_subsystem ? input_subsystem->GetSDLLastActivity(pad) : std::nullopt;
+            const bool tapped = last && overlay_last_tick != std::chrono::steady_clock::time_point{} &&
+                                *last > overlay_last_tick;
+            if (PadInputHeld(pad) || tapped) {
+                fills[row] = QColor(60, 120, 230, 190);
+            } else if (now_ms - since < flash_ms) {
+                fills[row] = QColor(60, 180, 90, 190);
+            }
         }
-        lines.append(QString());
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        while (!console_debug_events.empty() &&
-               now - console_debug_events.front().first > 5000) {
-            console_debug_events.pop_front();
-        }
-        for (const auto& [when, e] : console_debug_events) {
-            lines.append(e);
-        }
+        overlay_last_tick = now_tick;
 
         auto& overlay = Common::GetControllerOverlayFrame();
         static bool overlay_push_logged = false;
@@ -2776,8 +2760,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                      Settings::values.console_debug_overlay.GetValue(),
                      static_cast<int>(mode), static_cast<int>(lines.size()));
         }
-        if (!Settings::values.console_debug_overlay.GetValue() ||
-            (!handheld && !console)) {
+        if (!Settings::values.console_debug_overlay.GetValue() || (!handheld && !console) ||
+            lines.isEmpty()) {
             std::scoped_lock lock{overlay.mutex};
             overlay.enabled = false;
             ++overlay.version;
@@ -2797,9 +2781,9 @@ void MainWindow::ApplyConsoleControllerMode() {
             painter.setPen(Qt::white);
             int y = 6 + fm.ascent();
             for (int n = 0; n < static_cast<int>(lines.size()); ++n) {
-                if (lit_lines.contains(n)) {
+                if (const auto fill = fills.find(n); fill != fills.end()) {
                     painter.fillRect(2, y - fm.ascent() - 1, width - 4, fm.lineSpacing(),
-                                     QColor(60, 120, 230, 180));
+                                     fill->second);
                 }
                 painter.drawText(6, y, lines[n]);
                 y += fm.lineSpacing();
@@ -2938,6 +2922,8 @@ void MainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Show_Filter_Bar, &MainWindow::OnToggleFilterBar);
     connect_menu(ui->action_Show_Status_Bar, &MainWindow::OnToggleStatusBar);
     connect_menu(ui->action_Show_Performance_Overlay, &MainWindow::OnTogglePerfOverlay);
+    connect(ui->action_Show_Controller_Overlay, &QAction::toggled, this,
+            [](bool shown) { Settings::values.console_debug_overlay.SetValue(shown); });
 #ifdef HAS_RESHADE
     connect_menu(ui->action_Post_Processing_Shaders, &MainWindow::OnPostProcessingShaders);
 #else
