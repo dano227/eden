@@ -171,17 +171,32 @@ void ConfigurePlayerAssignment::ApplyConfiguration() {
 void ConfigurePlayerAssignment::UpdateModeUi() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     frontend_row->setVisible(mode->currentIndex() == 0);
-    // The automatic modes say so; the manual ones have no live players to show
+    // Only the automatic modes have live players to show
     const bool automatic = IsAutomatic(selected);
-    if (selected == Settings::AppletMode::HandheldConsoleMode) {
+    switch (selected) {
+    case Settings::AppletMode::ConsoleMode:
+        mode_info->setText(tr("Controller assignment is automatic. Each controller is assigned "
+                              "to the next available player when it connects."));
+        break;
+    case Settings::AppletMode::HandheldConsoleMode:
         mode_info->setText(tr("Controller assignment is automatic. Connected controllers take "
                               "priority over the handheld's built-in controls, which are used "
                               "only when no other controller is connected."));
-    } else if (automatic) {
-        mode_info->setText(tr("Controller assignment is automatic. Each controller is assigned "
-                              "to the next available player when it connects."));
+        break;
+    case Settings::AppletMode::Disabled:
+        mode_info->setText(tr("Controllers are assigned in each player's tab. Games use the "
+                              "configured players without showing a controller applet."));
+        break;
+    case Settings::AppletMode::LLE:
+        mode_info->setText(tr("Controllers are assigned in each player's tab. When a game "
+                              "requests controller setup, the console's own controller applet "
+                              "is shown. This requires the system firmware."));
+        break;
+    default:
+        mode_info->setText(tr("Controllers are assigned in each player's tab. When a game "
+                              "requests controller setup, Eden's controller applet is shown."));
+        break;
     }
-    mode_info->setVisible(automatic);
     now_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
