@@ -12,6 +12,7 @@
 #include <QWidget>
 
 class QButtonGroup;
+class QCheckBox;
 class QComboBox;
 class QFrame;
 class QVBoxLayout;
@@ -58,6 +59,8 @@ private:
     QWidget* frontend_row = nullptr;
     QButtonGroup* frontend_modes = nullptr;
     QLabel* mode_info = nullptr;
+    QCheckBox* overlay_toggle = nullptr;
+    bool original_overlay = false;
     QWidget* now_box = nullptr;
 
     QWidget* builtin_row = nullptr;

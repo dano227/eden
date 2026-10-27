@@ -5306,6 +5306,8 @@ void MainWindow::OnConfigure() {
         RestoreUIState();
     }
     MergeConsoleProfileEdits(players_before);
+    ui->action_Show_Controller_Overlay->setChecked(
+        Settings::values.console_debug_overlay.GetValue());
     InitializeHotkeys();
 
     if (UISettings::values.theme != old_theme) {

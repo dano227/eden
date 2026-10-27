@@ -22,6 +22,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QRadioButton>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -207,7 +208,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     layout->addWidget(builtin_row);
 
     // The players right now, as the engine assigned them
-    now_box = new QGroupBox(tr("Players now"), this);
+    now_box = new QGroupBox(tr("Connected Players"), this);
     auto* now_layout = new QVBoxLayout(now_box);
     players_box = new QWidget(now_box);
     players_list = new QVBoxLayout(players_box);
@@ -218,6 +219,15 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     players_note->setWordWrap(true);
     now_layout->addWidget(players_note);
     layout->addWidget(now_box);
+
+    // The same toggle as View > Show Controller Overlay
+    overlay_toggle = new QCheckBox(tr("Show Controller Overlay"), this);
+    overlay_toggle->setToolTip(tr("Shows the players and their controllers over the game."));
+    original_overlay = Settings::values.console_debug_overlay.GetValue();
+    overlay_toggle->setChecked(original_overlay);
+    connect(overlay_toggle, &QCheckBox::toggled, this,
+            [](bool shown) { Settings::values.console_debug_overlay.SetValue(shown); });
+    layout->addWidget(overlay_toggle);
     layout->addStretch(1);
 
     // The mode applies at once, so the players switch while the dialog is open; closing it
@@ -245,6 +255,7 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
     if (!applied) {
         Settings::values.controller_applet_mode.SetValue(
             static_cast<Settings::AppletMode>(original_mode));
+        Settings::values.console_debug_overlay.SetValue(original_overlay);
     }
 }
 
@@ -314,6 +325,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
         break;
     }
     now_box->setVisible(automatic);
+    overlay_toggle->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }
