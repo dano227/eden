@@ -145,6 +145,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
 
     // The Players tab comes first: how players are assigned, and who is which player now
     assignment = new ConfigurePlayerAssignment(this);
+    assignment->setAccessibleName(tr("Players"));
     ui->tabWidget->insertTab(0, assignment, tr("Players"));
     ui->tabWidget->setCurrentIndex(0);
 
@@ -208,9 +209,10 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
 }
 
 QList<QWidget*> ConfigureInput::GetSubTabs() const {
+    // The settings dialog shows these, not this widget's own tab bar: the Players tab first
     return {
-        ui->tabPlayer1, ui->tabPlayer2, ui->tabPlayer3, ui->tabPlayer4,  ui->tabPlayer5,
-        ui->tabPlayer6, ui->tabPlayer7, ui->tabPlayer8, ui->tabAdvanced,
+        assignment,     ui->tabPlayer1, ui->tabPlayer2, ui->tabPlayer3, ui->tabPlayer4,
+        ui->tabPlayer5, ui->tabPlayer6, ui->tabPlayer7, ui->tabPlayer8, ui->tabAdvanced,
     };
 }
 
