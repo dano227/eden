@@ -1910,15 +1910,88 @@ void MainWindow::ApplyConsoleControllerMode() {
     // The live set of gamepads. The map key is the connection instance (always unique:
     // two pads can share a serial or GUID through Steam Input and must never collapse),
     // and pad_identity records the stable identity used to reclaim slots.
+    //
+    // Under Steam Input the virtual pads are not the controllers: every one shares a GUID,
+    // and Steam moves physical controllers between them while they stay connected (the
+    // deck's own controller moves to the newest virtual pad whenever an external one
+    // connects). The Steam handle travels with the physical controller, so it is the
+    // identity there. Steam fills it in a moment after a virtual pad appears: until then the
+    // pad is not live yet (3 seconds at most, then its GUID identity has to do).
     std::map<u32, std::string> live;
     {
+        static std::map<u32, std::chrono::steady_clock::time_point> first_seen;
+        const auto now = std::chrono::steady_clock::now();
+        std::set<u32> present;
         const JoystickApiLock lock;
         int count = 0;
         SDL_JoystickID* ids = SDL_GetGamepads(&count);
         for (int i = 0; i < count; ++i) {
-            live[ids[i]] = PadIdentity(ids[i]);
+            const u32 id = ids[i];
+            present.insert(id);
+            first_seen.try_emplace(id, now);
+            std::string ident = PadIdentity(id);
+            if (LaunchedThroughSteam()) {
+                if (const Uint64 handle = PadSteamHandle(id)) {
+                    ident = fmt::format("steamhandle:{:#x}", handle);
+                } else if (now - first_seen[id] < std::chrono::seconds{3}) {
+                    continue;
+                }
+            }
+            live[id] = std::move(ident);
         }
         SDL_free(ids);
+        std::erase_if(first_seen, [&present](const auto& e) { return !present.contains(e.first); });
+    }
+
+    // A controller Steam moved to another virtual pad takes its slot and its handheld latch
+    // along: the slot belongs to the controller, not to the virtual pad
+    if (LaunchedThroughSteam()) {
+        static std::map<std::string, u32> handle_inst;
+        std::map<u32, u32> moves; // to <- from
+        for (const auto& [id, ident] : live) {
+            if (!ident.starts_with("steamhandle:")) {
+                continue;
+            }
+            const auto it = handle_inst.find(ident);
+            if (it != handle_inst.end() && it->second != id) {
+                moves[id] = it->second;
+            }
+        }
+        if (!moves.empty()) {
+            std::map<u32, int> old_slot;
+            std::set<u32> involved;
+            for (const auto& [to, from] : moves) {
+                involved.insert(to);
+                involved.insert(from);
+            }
+            for (const u32 inst : involved) {
+                if (const auto it = pad_slots.find(inst); it != pad_slots.end()) {
+                    old_slot[inst] = it->second;
+                    pad_slots.erase(it);
+                }
+                pad_identity.erase(inst);
+            }
+            u32 new_builtin = builtin_pad_id;
+            for (const auto& [to, from] : moves) {
+                const auto slot = old_slot.find(from);
+                LOG_INFO(Frontend, "console-mode: Steam moved {} from inst={} to inst={} (P{})",
+                         live[to], from, to, slot != old_slot.end() ? slot->second + 1 : 0);
+                if (slot != old_slot.end()) {
+                    pad_slots[to] = slot->second;
+                    pad_identity[to] = live[to];
+                }
+                if (builtin_pad_id == from) {
+                    new_builtin = to;
+                }
+            }
+            builtin_pad_id = new_builtin;
+        }
+        handle_inst.clear();
+        for (const auto& [id, ident] : live) {
+            if (ident.starts_with("steamhandle:")) {
+                handle_inst[ident] = id;
+            }
+        }
     }
 
     // Publish the live pads to the settings UI, and service the Identify handshake: the
@@ -1977,7 +2050,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             std::string guid_ident;
             for (const auto& [id, ident] : live) {
                 if (fmt::format("{:#x}", PadSteamHandle(id)) == handle) {
-                    guid_ident = ident;
+                    guid_ident = PadIdentity(id);
                     builtin_pad_id = id;
                     break;
                 }
@@ -2121,7 +2194,9 @@ void MainWindow::ApplyConsoleControllerMode() {
     // pattern, where an impostor wearing the identity struck the wrong player row.
     u32 builtin_match_id = 0;
     bool builtin_valid = false;
-    if (builtin_pad_id && live.find(builtin_pad_id) != live.end()) {
+    const bool steam_handle_known =
+        LaunchedThroughSteam() && !Settings::values.builtin_pad_steam_handle.GetValue().empty();
+    if (builtin_pad_id && live.find(builtin_pad_id) != live.end() && !steam_handle_known) {
         builtin_match_id = builtin_pad_id;
         builtin_valid = true;
     } else if (LaunchedThroughSteam()) {
@@ -2308,7 +2383,7 @@ void MainWindow::ApplyConsoleControllerMode() {
     // When the externals leave, the built-in claims slot one again - no tiptoeing needed.
     if (handheld && builtin_valid && live.size() > 1) {
         for (auto it = pad_slots.begin(); it != pad_slots.end();) {
-            if (it->first == builtin_match_id && pad_identity[it->first] == builtin_identity) {
+            if (it->first == builtin_match_id) {
                 pad_identity.erase(it->first);
                 it = pad_slots.erase(it);
                 changed = true;
@@ -2387,6 +2462,19 @@ void MainWindow::ApplyConsoleControllerMode() {
                         match = it;
                     }
                     ++matches;
+                }
+            }
+            if (matches == 0 && LaunchedThroughSteam()) {
+                // Steam may hand a returning controller a new handle: then no reservation is
+                // provably its own, and it takes the lowest one, like an ambiguous pad
+                for (auto it = pad_slots.begin(); it != pad_slots.end(); ++it) {
+                    if (live.find(it->first) == live.end() &&
+                        (match == pad_slots.end() || it->second < match->second)) {
+                        match = it;
+                    }
+                }
+                if (match != pad_slots.end()) {
+                    matches = 2;
                 }
             }
             if (matches > 1) {
