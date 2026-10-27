@@ -27,6 +27,9 @@
 #include "common/controller_console_state.h"
 #include <mutex>
 #include <QTimer>
+#include <vector>
+#include <algorithm>
+#include <QTabWidget>
 #include "yuzu/configuration/configure_input_player.h"
 #include "yuzu/configuration/configure_motion_touch.h"
 #include "yuzu/configuration/configure_ringcon.h"
@@ -148,7 +151,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
 
     // The Players tab comes first: how players are assigned, and who is which player now
     assignment = new ConfigurePlayerAssignment(this);
-    assignment->setAccessibleName(tr("Players"));
+    assignment->setAccessibleName(tr("Controllers"));
 
     {
         auto& state = Common::GetControllerConsoleState();
@@ -158,11 +161,42 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     follow_timer = new QTimer(this);
     connect(follow_timer, &QTimer::timeout, this, [this] {
         unsigned long long generation = 0;
+        std::vector<int> active_players;
+        bool engine_active = false;
         {
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
             generation = state.generation;
+            engine_active = state.engine_active;
+            for (const auto& row : state.players) {
+                active_players.push_back(row.player);
+            }
         }
+        // Automatic assignment owns the players: only their tabs show, and their connection
+        // cannot be toggled by hand
+        const auto mode = Settings::values.controller_applet_mode.GetValue();
+        const bool automatic = mode == Settings::AppletMode::ConsoleMode ||
+                               mode == Settings::AppletMode::HandheldConsoleMode;
+        QTabWidget* tabs = nullptr;
+        for (QWidget* parent = player_tabs[0]->parentWidget(); parent && !tabs;
+             parent = parent->parentWidget()) {
+            tabs = qobject_cast<QTabWidget*>(parent);
+        }
+        for (std::size_t i = 0; i < player_tabs.size(); ++i) {
+            const bool shown =
+                !automatic || (engine_active && std::find(active_players.begin(),
+                                                          active_players.end(),
+                                                          static_cast<int>(i)) !=
+                                                    active_players.end());
+            if (tabs) {
+                if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
+                    tabs->setTabVisible(index, shown);
+                }
+            }
+            player_controllers[i]->SetConnectionLocked(automatic);
+            connected_controller_checkboxes[i]->setEnabled(!automatic);
+        }
+
         if (generation == followed_generation) {
             return;
         }
@@ -180,7 +214,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
         }
     });
     follow_timer->start(250);
-    ui->tabWidget->insertTab(0, assignment, tr("Players"));
+    ui->tabWidget->insertTab(0, assignment, tr("Controllers"));
     ui->tabWidget->setCurrentIndex(0);
 
     advanced = new ConfigureInputAdvanced(hid_core, this);
@@ -243,10 +277,10 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
 }
 
 QList<QWidget*> ConfigureInput::GetSubTabs() const {
-    // The settings dialog shows these, not this widget's own tab bar: the Players tab first
+    // The settings dialog shows these, not this widget's own tab bar
     return {
-        assignment,     ui->tabPlayer1, ui->tabPlayer2, ui->tabPlayer3, ui->tabPlayer4,
-        ui->tabPlayer5, ui->tabPlayer6, ui->tabPlayer7, ui->tabPlayer8, ui->tabAdvanced,
+        assignment,     ui->tabAdvanced,  ui->tabPlayer1, ui->tabPlayer2, ui->tabPlayer3,
+        ui->tabPlayer4, ui->tabPlayer5, ui->tabPlayer6, ui->tabPlayer7, ui->tabPlayer8,
     };
 }
 

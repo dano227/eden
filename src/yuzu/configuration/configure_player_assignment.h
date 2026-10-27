@@ -16,7 +16,7 @@ class QPushButton;
 class QTimer;
 class QWidget;
 
-/// The Players tab of the Controls settings: how players are assigned (by hand, or
+/// The Controllers tab of the Controls settings: how players are assigned (by hand, or
 /// automatically from the connected controllers), which controller is the handheld's own
 /// built-in one, and the live list of players with a swap per row.
 class ConfigurePlayerAssignment : public QWidget {

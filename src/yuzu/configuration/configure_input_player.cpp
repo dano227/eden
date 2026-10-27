@@ -906,6 +906,18 @@ void ConfigureInputPlayer::RefreshFromController() {
     UpdateInputDeviceCombobox();
 }
 
+void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
+    if (ui->groupConnectedController->isCheckable() == !locked) {
+        return;
+    }
+    const bool blocked = ui->groupConnectedController->blockSignals(true);
+    ui->groupConnectedController->setCheckable(!locked);
+    if (!locked) {
+        ui->groupConnectedController->setChecked(emulated_controller->IsConnected(true));
+    }
+    ui->groupConnectedController->blockSignals(blocked);
+}
+
 void ConfigureInputPlayer::UpdateInputDeviceCombobox() {
     // Skip input device persistence if "Input Devices" is set to "Any".
     if (ui->comboDevices->currentIndex() == 0) {
