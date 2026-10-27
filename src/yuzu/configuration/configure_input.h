@@ -23,6 +23,7 @@ class QTimer;
 
 class ConfigureInputAdvanced;
 class ConfigureInputPlayer;
+class ConfigurePlayerAssignment;
 
 class InputProfiles;
 
@@ -75,6 +76,7 @@ private:
     std::unique_ptr<InputProfiles> profiles;
 
     std::array<ConfigureInputPlayer*, 8> player_controllers{};
+    ConfigurePlayerAssignment* assignment = nullptr;
     std::array<QWidget*, 8> player_tabs{};
     // Checkboxes representing the "Connected Controllers".
     std::array<QCheckBox*, 8> connected_controller_checkboxes{};

@@ -38,7 +38,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
 
     // Applets
     INSERT(Settings, cabinet_applet_mode, tr("Amiibo editor"), QString());
-    INSERT(Settings, controller_applet_mode, tr("Controller configuration"), QString());
+    // Chosen in Controls > Players ("Assign players")
+    INSERT(Settings, controller_applet_mode, QString(), QString());
     INSERT(Settings, data_erase_applet_mode, tr("Data erase"), QString());
     INSERT(Settings, error_applet_mode, tr("Error"), QString());
     INSERT(Settings, net_connect_applet_mode, tr("Net connect"), QString());

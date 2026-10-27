@@ -2248,6 +2248,15 @@ void MainWindow::ApplyConsoleControllerMode() {
     }
 
     if (!handheld && !console) {
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            state.engine_active = false;
+            state.players.clear();
+            state.handheld_name.clear();
+            state.handheld_has_player = false;
+            state.swap_requests.clear();
+        }
         if (console_profile) {
             // Leaving the console modes: the user's own players come back exactly as they were
             RestoreConsoleProfile();
@@ -2770,6 +2779,45 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
+    // Swaps requested from the Players tab: the two players' pads trade slots (or one moves,
+    // when the other player has none), for this session only. The routing below re-points
+    // them at once.
+    {
+        std::vector<std::pair<int, int>> requests;
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            requests.swap(state.swap_requests);
+        }
+        for (const auto& [a, b] : requests) {
+            u32 pad_a = 0;
+            u32 pad_b = 0;
+            for (const auto& [id, slot] : pad_slots) {
+                if (live.find(id) == live.end()) {
+                    continue;
+                }
+                if (slot == a) {
+                    pad_a = id;
+                }
+                if (slot == b) {
+                    pad_b = id;
+                }
+            }
+            if (!pad_a && !pad_b) {
+                continue;
+            }
+            if (pad_a) {
+                pad_slots[pad_a] = b;
+            }
+            if (pad_b) {
+                pad_slots[pad_b] = a;
+            }
+            LOG_INFO(Frontend, "console-mode: Players tab swap P{} <-> P{} (inst={} inst={})",
+                     a + 1, b + 1, pad_a, pad_b);
+            changed = true;
+        }
+    }
+
     // Each live pad's player gets that pad's binding set, pointed at the pad. The slot map
     // alone is not the routing: the profile binds player N to whatever (guid, port) it was
     // mapped with, and the driver's ports follow attach order with freed ports reused - so a
@@ -2919,6 +2967,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             QStringLiteral(" \\d+(?=( \\(Steam virtual\\))?$)")};
         QStringList lines;
         std::map<int, QColor> fills;
+        std::vector<Common::ControllerConsoleState::PlayerRow> tab_rows;
         for (int i = 0; i < static_cast<int>(players.size()); ++i) {
             u32 pad = 0;
             for (const auto& [id, slot] : pad_slots) {
@@ -2959,13 +3008,32 @@ void MainWindow::ApplyConsoleControllerMode() {
                 input_subsystem ? input_subsystem->GetSDLLastActivity(pad) : std::nullopt;
             const bool tapped = last && overlay_last_tick != std::chrono::steady_clock::time_point{} &&
                                 *last > overlay_last_tick;
-            if (PadInputHeld(pad) || tapped) {
+            const bool active = PadInputHeld(pad) || tapped;
+            tab_rows.push_back({i, overlay_row_name[i].toStdString(), active});
+            if (active) {
                 fills[row] = QColor(60, 120, 230, 190);
             } else if (now_ms - since < flash_ms) {
                 fills[row] = QColor(60, 180, 90, 190);
             }
         }
         overlay_last_tick = now_tick;
+        {
+            std::string handheld_name;
+            bool handheld_has_player = false;
+            if (builtin_valid && live.find(builtin_match_id) != live.end()) {
+                const auto [display, raw] = label_of(builtin_match_id, std::string{});
+                QString name = display.isEmpty() ? raw : display;
+                name.remove(port_number);
+                handheld_name = name.toStdString();
+                handheld_has_player = pad_slots.contains(builtin_match_id);
+            }
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            state.engine_active = true;
+            state.players = std::move(tab_rows);
+            state.handheld_name = std::move(handheld_name);
+            state.handheld_has_player = handheld_has_player;
+        }
 
         auto& overlay = Common::GetControllerOverlayFrame();
         static bool overlay_push_logged = false;

@@ -23,6 +23,7 @@
 #include "yuzu/configuration/configure_debug_controller.h"
 #include "yuzu/configuration/configure_input.h"
 #include "yuzu/configuration/configure_input_advanced.h"
+#include "yuzu/configuration/configure_player_assignment.h"
 #include "yuzu/configuration/configure_input_player.h"
 #include "yuzu/configuration/configure_motion_touch.h"
 #include "yuzu/configuration/configure_ringcon.h"
@@ -142,6 +143,11 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     connect(player_controllers[0], &ConfigureInputPlayer::HandheldStateChanged,
             [this](bool is_handheld) { UpdateDockedState(is_handheld); });
 
+    // The Players tab comes first: how players are assigned, and who is which player now
+    assignment = new ConfigurePlayerAssignment(this);
+    ui->tabWidget->insertTab(0, assignment, tr("Players"));
+    ui->tabWidget->setCurrentIndex(0);
+
     advanced = new ConfigureInputAdvanced(hid_core, this);
 
     QHBoxLayout* advancedLayout = new QHBoxLayout(ui->tabAdvanced);
@@ -216,6 +222,7 @@ void ConfigureInput::ApplyConfiguration() {
     }
 
     advanced->ApplyConfiguration();
+    assignment->ApplyConfiguration();
 
     const bool pre_docked_mode = Settings::IsDockedMode();
     const bool docked_mode_selected = ui->radioDocked->isChecked();
