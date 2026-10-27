@@ -8,6 +8,7 @@
 #include <QString>
 #include <QWidget>
 
+class QButtonGroup;
 class QComboBox;
 class QGridLayout;
 class QLabel;
@@ -29,6 +30,9 @@ public:
 
 private:
     void LoadConfiguration();
+    /// The controller applet mode the controls select
+    int SelectedMode() const;
+    void OnModeChanged();
     void UpdateModeUi();
     void Refresh();
     void RefreshBuiltin();
@@ -37,7 +41,10 @@ private:
     void OnIdentifyPressed();
     void OnSwapPressed(int player);
 
+    /// Custom frontend or Real applet; the frontend's modes are radio buttons below it
     QComboBox* mode = nullptr;
+    QWidget* frontend_row = nullptr;
+    QButtonGroup* frontend_modes = nullptr;
 
     QWidget* builtin_row = nullptr;
     QComboBox* builtin_picker = nullptr;

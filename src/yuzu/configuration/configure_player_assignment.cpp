@@ -12,6 +12,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QButtonGroup>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -35,18 +37,39 @@ bool IsAutomatic(Settings::AppletMode mode) {
 ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
 
-    // The controller applet's mode, with the names and order it always had; the console
-    // modes own the players and keep the applet from opening
+    // The controller applet's mode: the real applet, or one of the custom frontend's modes
     auto* mode_box = new QGroupBox(tr("Controller Configuration"), this);
     auto* mode_layout = new QVBoxLayout(mode_box);
     mode = new QComboBox(mode_box);
-    mode->addItem(tr("Custom frontend"), static_cast<int>(Settings::AppletMode::HLE));
-    mode->addItem(tr("Real applet"), static_cast<int>(Settings::AppletMode::LLE));
-    mode->addItem(tr("Disabled"), static_cast<int>(Settings::AppletMode::Disabled));
-    mode->addItem(tr("Console Mode"), static_cast<int>(Settings::AppletMode::ConsoleMode));
-    mode->addItem(tr("Handheld Console Mode"),
-                  static_cast<int>(Settings::AppletMode::HandheldConsoleMode));
+    mode->addItem(tr("Custom frontend"));
+    mode->addItem(tr("Real applet"));
     mode_layout->addWidget(mode);
+
+    frontend_row = new QWidget(mode_box);
+    auto* frontend_layout = new QHBoxLayout(frontend_row);
+    frontend_layout->setContentsMargins(0, 0, 0, 0);
+    frontend_modes = new QButtonGroup(this);
+    const auto add_mode = [&](const QString& name, const QString& tooltip,
+                              Settings::AppletMode value) {
+        auto* button = new QRadioButton(name, frontend_row);
+        button->setToolTip(tooltip);
+        frontend_modes->addButton(button, static_cast<int>(value));
+        frontend_layout->addWidget(button);
+    };
+    add_mode(tr("Modern"), tr("Each controller that connects becomes the next player."),
+             Settings::AppletMode::ConsoleMode);
+    add_mode(tr("Handheld"),
+             tr("The handheld's controls are player 1 only while no other controller is "
+                "connected."),
+             Settings::AppletMode::HandheldConsoleMode);
+    add_mode(tr("Legacy Applet"),
+             tr("Players are set in each player's tab; games open Eden's controller window."),
+             Settings::AppletMode::HLE);
+    add_mode(tr("Disabled"),
+             tr("Players are set in each player's tab; games get them without a window."),
+             Settings::AppletMode::Disabled);
+    frontend_layout->addStretch(1);
+    mode_layout->addWidget(frontend_row);
     layout->addWidget(mode_box);
 
     // Handheld Console Mode: declare the handheld's own controller instead of guessing it.
@@ -83,11 +106,10 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     // The mode applies at once, so the players switch while the dialog is open; closing it
     // without applying puts the previous mode back (see the destructor)
     original_mode = static_cast<int>(Settings::values.controller_applet_mode.GetValue());
-    connect(mode, &QComboBox::currentIndexChanged, this, [this] {
-        Settings::values.controller_applet_mode.SetValue(
-            static_cast<Settings::AppletMode>(mode->currentData().toInt()));
-        UpdateModeUi();
-    });
+    connect(mode, &QComboBox::currentIndexChanged, this,
+            &ConfigurePlayerAssignment::OnModeChanged);
+    connect(frontend_modes, &QButtonGroup::idClicked, this,
+            &ConfigurePlayerAssignment::OnModeChanged);
     connect(builtin_picker, &QComboBox::currentIndexChanged, this,
             &ConfigurePlayerAssignment::OnBuiltinPicked);
     connect(builtin_identify, &QPushButton::clicked, this,
@@ -109,21 +131,43 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
 }
 
 void ConfigurePlayerAssignment::LoadConfiguration() {
-    const int current = static_cast<int>(Settings::values.controller_applet_mode.GetValue());
-    const int index = mode->findData(current);
-    mode->setCurrentIndex(index >= 0 ? index : mode->findData(
-                                                   static_cast<int>(Settings::AppletMode::HLE)));
+    const auto current = Settings::values.controller_applet_mode.GetValue();
+    const bool real_applet = current == Settings::AppletMode::LLE;
+    // The real applet keeps Legacy Applet selected underneath, for switching back
+    auto* button = frontend_modes->button(
+        static_cast<int>(real_applet ? Settings::AppletMode::HLE : current));
+    if (!button) {
+        button = frontend_modes->button(static_cast<int>(Settings::AppletMode::HLE));
+    }
+    const bool blocked = mode->blockSignals(true);
+    button->setChecked(true);
+    mode->setCurrentIndex(real_applet ? 1 : 0);
+    mode->blockSignals(blocked);
+    UpdateModeUi();
+}
+
+int ConfigurePlayerAssignment::SelectedMode() const {
+    if (mode->currentIndex() == 1) {
+        return static_cast<int>(Settings::AppletMode::LLE);
+    }
+    return frontend_modes->checkedId();
+}
+
+void ConfigurePlayerAssignment::OnModeChanged() {
+    Settings::values.controller_applet_mode.SetValue(
+        static_cast<Settings::AppletMode>(SelectedMode()));
     UpdateModeUi();
 }
 
 void ConfigurePlayerAssignment::ApplyConfiguration() {
     Settings::values.controller_applet_mode.SetValue(
-        static_cast<Settings::AppletMode>(mode->currentData().toInt()));
+        static_cast<Settings::AppletMode>(SelectedMode()));
     applied = true;
 }
 
 void ConfigurePlayerAssignment::UpdateModeUi() {
-    const auto selected = static_cast<Settings::AppletMode>(mode->currentData().toInt());
+    const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
+    frontend_row->setVisible(mode->currentIndex() == 0);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }
@@ -230,7 +274,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         handheld_has_player = state.handheld_has_player;
         engine_active = state.engine_active;
     }
-    const auto selected = static_cast<Settings::AppletMode>(mode->currentData().toInt());
+    const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     const bool in_effect = selected == Settings::values.controller_applet_mode.GetValue();
 
     // Rebuild the rows when the players (or the pending swap) change; the highlight alone
