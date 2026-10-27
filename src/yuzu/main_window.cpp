@@ -2347,6 +2347,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                     builtin_pad_id = id;
                     builtin_identity = ident;
                     builtin_seen_first = true;
+                    builtin_match_id = id;
+                    builtin_valid = true;
                     break;
                 }
             }
@@ -2374,13 +2376,21 @@ void MainWindow::ApplyConsoleControllerMode() {
                 return matches == 1 ? found : 0;
             };
             const u32 candidate = handheld_candidate();
+            // A pad identified here is the handheld's own from this very tick on: the claims
+            // below must already skip it, or a launch with the externals on gives the deck
+            // P1 and the externals P2.., and releasing the deck's P1 a tick later leaves P1
+            // empty (deck log: "player 1 deactivated", externals on P2-P5)
             if (candidate) {
                 builtin_pad_id = candidate;
                 builtin_identity = live[candidate];
                 builtin_seen_first = true;
                 Settings::values.builtin_pad_identity.SetValue(live[candidate]);
                 builtin_warned = false;
+                builtin_match_id = candidate;
+                builtin_valid = true;
             } else if (live.size() == 1) {
+                builtin_match_id = live.begin()->first;
+                builtin_valid = true;
                 builtin_pad_id = live.begin()->first;
                 builtin_identity = live.begin()->second;
                 builtin_seen_first = true;
