@@ -1302,6 +1302,8 @@ void MainWindow::InitializeHotkeys() {
     LinkActionShortcut(ui->action_Show_Status_Bar, QStringLiteral("Toggle Status Bar"));
     LinkActionShortcut(ui->action_Show_Performance_Overlay,
                        QStringLiteral("Toggle Performance Overlay"));
+    LinkActionShortcut(ui->action_Show_Controller_Overlay,
+                       QStringLiteral("Toggle Controller Overlay"));
     LinkActionShortcut(ui->action_Fullscreen, QStringLiteral("Fullscreen"));
     LinkActionShortcut(ui->action_Capture_Screenshot, QStringLiteral("Capture Screenshot"));
     LinkActionShortcut(ui->action_TAS_Start, QStringLiteral("TAS Start/Stop"), true);
