@@ -1930,7 +1930,11 @@ void MainWindow::ApplyConsoleControllerMode() {
         std::scoped_lock lock{state.mutex};
         state.pads.clear();
         for (const auto& [id, ident] : live) {
-            state.pads.emplace_back(PadName(id).toStdString(), ident);
+            // Under Steam every pad shares one GUID identity, so the picker would declare
+            // them all at once: its entries carry the Steam handle there instead
+            const Uint64 handle = LaunchedThroughSteam() ? PadSteamHandle(id) : 0;
+            state.pads.emplace_back(PadName(id).toStdString(),
+                                    handle ? fmt::format("steamhandle:{:#x}", handle) : ident);
         }
         // A human tap is shorter than 250ms: poll fast while the Identify handshake is
         // armed so a quick press cannot slip between the samples.
@@ -1949,12 +1953,40 @@ void MainWindow::ApplyConsoleControllerMode() {
                         builtin_warned = false;
                         Settings::values.builtin_pad_identity.SetValue(ident);
                         Settings::values.builtin_pad_manual.SetValue(true);
-                        LOG_INFO(Frontend, "console-mode: identify captured inst={} ident={}", id,
-                                 ident);
+                        const Uint64 handle = LaunchedThroughSteam() ? PadSteamHandle(id) : 0;
+                        Settings::values.builtin_pad_steam_handle.SetValue(
+                            handle ? fmt::format("{:#x}", handle) : std::string{});
+                        LOG_INFO(Frontend,
+                                 "console-mode: identify captured inst={} ident={} "
+                                 "steam_handle={:#x}",
+                                 id, ident, handle);
                         break;
                     }
                 }
             }
+        }
+    }
+
+    // The applets tab's picker declares a pad by its Steam handle under Steam (see the
+    // published entries): keep the handle as such, and the pad's GUID as its identity
+    {
+        const std::string declared = Settings::values.builtin_pad_identity.GetValue();
+        constexpr std::string_view prefix = "steamhandle:";
+        if (declared.starts_with(prefix)) {
+            const std::string handle = declared.substr(prefix.size());
+            std::string guid_ident;
+            for (const auto& [id, ident] : live) {
+                if (fmt::format("{:#x}", PadSteamHandle(id)) == handle) {
+                    guid_ident = ident;
+                    builtin_pad_id = id;
+                    break;
+                }
+            }
+            Settings::values.builtin_pad_steam_handle.SetValue(handle);
+            Settings::values.builtin_pad_identity.SetValue(guid_ident);
+            builtin_identity = guid_ident;
+            LOG_INFO(Frontend, "console-mode: picker declared Steam handle {} inst={}", handle,
+                     builtin_pad_id);
         }
     }
 
@@ -1978,6 +2010,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             builtin_warned = false;
             if (!Settings::values.builtin_pad_manual.GetValue()) {
                 Settings::values.builtin_pad_identity.SetValue(std::string{});
+                Settings::values.builtin_pad_steam_handle.SetValue(std::string{});
             }
         }
         return;
@@ -2091,6 +2124,38 @@ void MainWindow::ApplyConsoleControllerMode() {
     if (builtin_pad_id && live.find(builtin_pad_id) != live.end()) {
         builtin_match_id = builtin_pad_id;
         builtin_valid = true;
+    } else if (LaunchedThroughSteam()) {
+        // Under Steam every virtual pad shares one GUID, and Steam's player index is no
+        // evidence either: a session gave the deck's pad index 4 and an Xbox pad index 0,
+        // which then took the deck's place. The deck's own pad keeps its Steam handle across
+        // sessions (0xff42501d27 in every deck log), so that is the identity. With none
+        // stored yet, a lone pad is the handheld's own, and gets latched below.
+        const std::string want = Settings::values.builtin_pad_steam_handle.GetValue();
+        int count = 0;
+        u32 holder = 0;
+        if (!want.empty()) {
+            for (const auto& [id, ident] : live) {
+                if (fmt::format("{:#x}", PadSteamHandle(id)) == want) {
+                    ++count;
+                    holder = id;
+                }
+            }
+        } else if (live.size() == 1) {
+            count = 1;
+            holder = live.begin()->first;
+        }
+        static std::string last_resolved;
+        const std::string resolved =
+            count == 1 ? fmt::format("inst={}", holder) : fmt::format("{} matches", count);
+        if (resolved != last_resolved) {
+            last_resolved = resolved;
+            LOG_INFO(Frontend, "console-mode: builtin by Steam handle {}: {}",
+                     want.empty() ? std::string{"(none stored)"} : want, resolved);
+        }
+        if (count == 1) {
+            builtin_match_id = holder;
+            builtin_valid = true;
+        }
     } else if (!builtin_identity.empty()) {
         int identity_count = 0;
         u32 identity_holder = 0;
@@ -2100,28 +2165,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 identity_holder = id;
             }
         }
-        if (LaunchedThroughSteam()) {
-            int idx0_count = 0;
-            u32 idx0 = 0;
-            for (const auto& [id, ident] : live) {
-                if (PadPlayerIndex(id) == 0) {
-                    ++idx0_count;
-                    idx0 = id;
-                }
-            }
-            if (idx0_count == 1) {
-                builtin_match_id = idx0;
-                builtin_valid = true;
-                static u32 last_resolved = 0;
-                if (idx0 != last_resolved) {
-                    last_resolved = idx0;
-                    LOG_INFO(Frontend,
-                             "console-mode: builtin re-resolved inst={} by Steam index 0 "
-                             "(identity matched {} pads)",
-                             idx0, identity_count);
-                }
-            }
-        } else if (identity_count == 1) {
+        if (identity_count == 1) {
             builtin_match_id = identity_holder;
             builtin_valid = true;
         }
@@ -2138,6 +2182,15 @@ void MainWindow::ApplyConsoleControllerMode() {
     }
     if (builtin_valid) {
         builtin_pad_id = builtin_match_id;
+        if (LaunchedThroughSteam() &&
+            Settings::values.builtin_pad_steam_handle.GetValue().empty()) {
+            // Latch the handheld's Steam handle as soon as Steam has filled it in
+            if (const Uint64 handle = PadSteamHandle(builtin_match_id)) {
+                Settings::values.builtin_pad_steam_handle.SetValue(fmt::format("{:#x}", handle));
+                LOG_INFO(Frontend, "console-mode: builtin Steam handle latched {:#x} inst={}",
+                         handle, builtin_match_id);
+            }
+        }
     }
 
     if (handheld) {
@@ -2157,7 +2210,8 @@ void MainWindow::ApplyConsoleControllerMode() {
             if (builtin_valid) {
                 builtin_pad_id = builtin_match_id;
             }
-        } else if (!builtin_pad_id && !stored.empty()) {
+        } else if (!builtin_pad_id && !stored.empty() && !LaunchedThroughSteam()) {
+            // (Under Steam the stored GUID is every pad's: the Steam handle resolves it)
             for (const auto& [id, ident] : live) {
                 if (ident == stored) {
                     builtin_pad_id = id;

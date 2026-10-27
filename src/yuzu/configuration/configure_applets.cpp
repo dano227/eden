@@ -196,7 +196,9 @@ void ConfigureApplets::RefreshBuiltinPicker() {
 void ConfigureApplets::OnBuiltinPicked(int index) {
     const QString ident = builtin_picker->itemData(index).toString();
     if (ident.isEmpty()) {
+        // Auto-detect: forget the latched pad entirely, so the engine detects it afresh
         Settings::values.builtin_pad_identity.SetValue(std::string{});
+        Settings::values.builtin_pad_steam_handle.SetValue(std::string{});
         Settings::values.builtin_pad_manual.SetValue(false);
     } else {
         Settings::values.builtin_pad_identity.SetValue(ident.toStdString());

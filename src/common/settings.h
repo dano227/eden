@@ -215,6 +215,11 @@ struct Values {
     /// The handheld's own pad identity, latched when Handheld Console Mode engages
     SwitchableSetting<std::string> builtin_pad_identity{linkage, std::string{},
                                                         "builtin_pad_identity", Category::Core};
+
+    /// Under Steam Input, the Steam handle of the handheld's own pad: its virtual pad shares
+    /// the GUID of every other one, but this handle stays the same across sessions
+    SwitchableSetting<std::string> builtin_pad_steam_handle{
+        linkage, std::string{}, "builtin_pad_steam_handle", Category::Core};
     SwitchableSetting<MemoryLayout, true> memory_layout_mode{linkage,
                                                              MemoryLayout::Memory_4Gb,
                                                              "memory_layout_mode",
