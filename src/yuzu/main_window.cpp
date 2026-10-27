@@ -2040,6 +2040,29 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
+    // Alone, the handheld's own pad is player one. The departed externals' reservations
+    // would otherwise hold the low slots for their grace period and push it to P4 (seen on
+    // the deck: three pads off in a row, ambiguous under Steam), so drop them: externals
+    // that return fill from player one again, in connect order.
+    if (handheld && builtin_valid && live.size() == 1) {
+        for (auto it = pad_slots.begin(); it != pad_slots.end();) {
+            const bool own = it->first == builtin_match_id;
+            if (!own || it->second != 0) {
+                if (!own) {
+                    LOG_INFO(Frontend,
+                             "console-mode: handheld alone, dropping reservation inst={} "
+                             "(slot {})",
+                             it->first, it->second);
+                }
+                pad_identity.erase(it->first);
+                it = pad_slots.erase(it);
+                changed = true;
+            } else {
+                ++it;
+            }
+        }
+    }
+
     // New pads claim the lowest free slot; the handheld's own pad is skipped while
     // others are around. The claim order follows the pads' player index where one exists:
     // under Steam that is the ordering players expect, not instance-number luck.
