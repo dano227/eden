@@ -1799,6 +1799,65 @@ void MainWindow::ApplyConsoleControllerMode() {
     const auto mode = Settings::values.controller_applet_mode.GetValue();
     const bool handheld = mode == Settings::AppletMode::HandheldConsoleMode;
     const bool console = mode == Settings::AppletMode::ConsoleMode;
+    // A declaration with no pad behind it (older builds wiped the identity when leaving the
+    // mode but kept the flag) would pin the engine to "no handheld" forever: undo it.
+    if (Settings::values.builtin_pad_manual.GetValue() &&
+        Settings::values.builtin_pad_identity.GetValue().empty()) {
+        Settings::values.builtin_pad_manual.SetValue(false);
+        LOG_INFO(Frontend, "console-mode: declared handheld had no identity, back to auto");
+    }
+
+    // The live set of gamepads. The map key is the connection instance (always unique:
+    // two pads can share a serial or GUID through Steam Input and must never collapse),
+    // and pad_identity records the stable identity used to reclaim slots.
+    std::map<u32, std::string> live;
+    {
+        const JoystickApiLock lock;
+        int count = 0;
+        SDL_JoystickID* ids = SDL_GetGamepads(&count);
+        for (int i = 0; i < count; ++i) {
+            live[ids[i]] = PadIdentity(ids[i]);
+        }
+        SDL_free(ids);
+    }
+
+    // Publish the live pads to the settings UI, and service the Identify handshake: the
+    // next pad with a button held becomes the handheld's own by declaration, not guess.
+    // Both run whatever the mode: the applets tab declares the handheld's pad while the
+    // mode is only picked in its dropdown, before OK applies it.
+    {
+        auto& state = Common::GetControllerConsoleState();
+        std::scoped_lock lock{state.mutex};
+        state.pads.clear();
+        for (const auto& [id, ident] : live) {
+            state.pads.emplace_back(PadName(id).toStdString(), ident);
+        }
+        // A human tap is shorter than 250ms: poll fast while the Identify handshake is
+        // armed so a quick press cannot slip between the samples.
+        console_mode_timer.start(std::chrono::milliseconds{state.identify_armed ? 50 : 250});
+        if (state.identify_armed) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - state.identify_armed_at > std::chrono::seconds{15}) {
+                state.identify_armed = false;
+            } else {
+                for (const auto& [id, ident] : live) {
+                    if (PadAnyButtonPressed(id)) {
+                        state.identify_armed = false;
+                        builtin_pad_id = id;
+                        builtin_identity = ident;
+                        builtin_seen_first = true;
+                        builtin_warned = false;
+                        Settings::values.builtin_pad_identity.SetValue(ident);
+                        Settings::values.builtin_pad_manual.SetValue(true);
+                        LOG_INFO(Frontend, "console-mode: identify captured inst={} ident={}", id,
+                                 ident);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     if (!handheld && !console) {
         if (console_profile) {
             // Leaving the console modes: the user's own players come back exactly as they were
@@ -1832,20 +1891,6 @@ void MainWindow::ApplyConsoleControllerMode() {
     if (builtin_identity.empty()) {
         // Console Mode also needs to know the handheld's own pad: it carries player one's set
         builtin_identity = Settings::values.builtin_pad_identity.GetValue();
-    }
-
-    // The live set of gamepads. The map key is the connection instance (always unique:
-    // two pads can share a serial or GUID through Steam Input and must never collapse),
-    // and pad_identity records the stable identity used to reclaim slots.
-    std::map<u32, std::string> live;
-    {
-        const JoystickApiLock lock;
-        int count = 0;
-        SDL_JoystickID* ids = SDL_GetGamepads(&count);
-        for (int i = 0; i < count; ++i) {
-            live[ids[i]] = PadIdentity(ids[i]);
-        }
-        SDL_free(ids);
     }
 
     // The settings-tab names (InputCommon's display names) matched by identity, kept per
@@ -1887,41 +1932,6 @@ void MainWindow::ApplyConsoleControllerMode() {
     };
     for (const auto& [id, ident] : live) {
         pad_names[ident] = label_of(id, ident);
-    }
-
-    // Publish the live pads to the settings UI, and service the Identify handshake: the
-    // next pad with a button held becomes the handheld's own by declaration, not guess.
-    {
-        auto& state = Common::GetControllerConsoleState();
-        std::scoped_lock lock{state.mutex};
-        state.pads.clear();
-        for (const auto& [id, ident] : live) {
-            state.pads.emplace_back(PadName(id).toStdString(), ident);
-        }
-        // A human tap is shorter than 250ms: poll fast while the Identify handshake is
-        // armed so a quick press cannot slip between the samples.
-        console_mode_timer.start(std::chrono::milliseconds{state.identify_armed ? 50 : 250});
-        if (state.identify_armed) {
-            const auto now = std::chrono::steady_clock::now();
-            if (now - state.identify_armed_at > std::chrono::seconds{15}) {
-                state.identify_armed = false;
-            } else {
-                for (const auto& [id, ident] : live) {
-                    if (PadAnyButtonPressed(id)) {
-                        state.identify_armed = false;
-                        builtin_pad_id = id;
-                        builtin_identity = ident;
-                        builtin_seen_first = true;
-                        builtin_warned = false;
-                        Settings::values.builtin_pad_identity.SetValue(ident);
-                        Settings::values.builtin_pad_manual.SetValue(true);
-                        LOG_INFO(Frontend, "console-mode: identify captured inst={} ident={}", id,
-                                 ident);
-                        break;
-                    }
-                }
-            }
-        }
     }
 
     // PROBE: trace the pad identities and the slot mapping at every change
