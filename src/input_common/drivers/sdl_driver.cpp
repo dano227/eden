@@ -763,8 +763,15 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
             if (!joystick->GetSDLJoystick()) {
                 continue;
             }
+            // Steam Input hands games virtual pads (Valve's vendor, the virtual gamepad
+            // product) carrying the real controller's name: say so, or a pad driven through
+            // Steam looks like the raw hardware
+            SDL_Joystick* const sdl_joystick = joystick->GetSDLJoystick();
+            const bool steam_virtual = SDL_GetJoystickVendor(sdl_joystick) == 0x28DE &&
+                                       SDL_GetJoystickProduct(sdl_joystick) == 0x11FF;
             const std::string name =
-                fmt::format("{} {}", joystick->GetControllerName(), joystick->GetPort());
+                fmt::format("{} {}{}", joystick->GetControllerName(), joystick->GetPort(),
+                            steam_virtual ? " (Steam virtual)" : "");
             devices.emplace_back(Common::ParamPackage{
                 {"engine", GetEngineName()},
                 {"display", std::move(name)},

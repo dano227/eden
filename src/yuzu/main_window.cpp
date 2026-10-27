@@ -2041,6 +2041,22 @@ void MainWindow::ApplyConsoleControllerMode() {
                  live.empty() ? " (none)" : "", builtin_pad_id,
                  builtin_seen_first ? "" : " (unlatched)");
 
+        // PROBE: Steam fills a virtual pad's handle, type and name in a moment after the pad
+        // appears; trace every change, to see whether the handle follows the physical pad
+        static std::map<u32, std::string> traced_steam;
+        for (const auto& [id, ident] : live) {
+            const std::string desc =
+                fmt::format("steam_handle={:#x} type={} name={}", PadSteamHandle(id),
+                            static_cast<int>(SDL_GetGamepadTypeForID(id)),
+                            PadName(id).toStdString());
+            auto& last = traced_steam[id];
+            if (last != desc) {
+                LOG_INFO(Frontend, "console-mode: pad inst={} slot={} {}", id,
+                         pad_slots.contains(id) ? pad_slots.at(id) + 1 : 0, desc);
+                last = desc;
+            }
+        }
+
         static std::set<u32> traced_insts;
         for (const auto& [id, ident] : live) {
             if (traced_insts.insert(id).second) {
@@ -2590,7 +2606,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                     const auto last = input_subsystem ? input_subsystem->GetSDLLastActivity(id)
                                                       : std::nullopt;
                     active = last && std::chrono::steady_clock::now() - *last <
-                                         std::chrono::milliseconds{600};
+                                         std::chrono::milliseconds{350};
                     break;
                 }
             }
@@ -2641,7 +2657,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             for (int n = 0; n < static_cast<int>(lines.size()); ++n) {
                 if (lit_lines.contains(n)) {
                     painter.fillRect(2, y - fm.ascent() - 1, width - 4, fm.lineSpacing(),
-                                     QColor(80, 200, 120, 170));
+                                     QColor(60, 120, 230, 180));
                 }
                 painter.drawText(6, y, lines[n]);
                 y += fm.lineSpacing();
