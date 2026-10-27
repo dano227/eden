@@ -3093,6 +3093,9 @@ void MainWindow::ApplyConsoleControllerMode() {
     if (QtCommon::system) {
         QtCommon::system->HIDCore().ReloadInputDevices();
     }
+    auto& state = Common::GetControllerConsoleState();
+    std::scoped_lock lock{state.mutex};
+    ++state.generation;
 }
 
 void MainWindow::RefreshRuntimeCheats() {

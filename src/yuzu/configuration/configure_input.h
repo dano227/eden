@@ -77,6 +77,10 @@ private:
 
     std::array<ConfigureInputPlayer*, 8> player_controllers{};
     ConfigurePlayerAssignment* assignment = nullptr;
+    /// Follows the automatic player assignment: the player tabs and the connected boxes are
+    /// redrawn when it reloads the controllers while the dialog is open
+    QTimer* follow_timer = nullptr;
+    unsigned long long followed_generation = 0;
     std::array<QWidget*, 8> player_tabs{};
     // Checkboxes representing the "Connected Controllers".
     std::array<QCheckBox*, 8> connected_controller_checkboxes{};

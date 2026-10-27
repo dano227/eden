@@ -24,6 +24,9 @@
 #include "yuzu/configuration/configure_input.h"
 #include "yuzu/configuration/configure_input_advanced.h"
 #include "yuzu/configuration/configure_player_assignment.h"
+#include "common/controller_console_state.h"
+#include <mutex>
+#include <QTimer>
 #include "yuzu/configuration/configure_input_player.h"
 #include "yuzu/configuration/configure_motion_touch.h"
 #include "yuzu/configuration/configure_ringcon.h"
@@ -146,6 +149,37 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     // The Players tab comes first: how players are assigned, and who is which player now
     assignment = new ConfigurePlayerAssignment(this);
     assignment->setAccessibleName(tr("Players"));
+
+    {
+        auto& state = Common::GetControllerConsoleState();
+        std::scoped_lock lock{state.mutex};
+        followed_generation = state.generation;
+    }
+    follow_timer = new QTimer(this);
+    connect(follow_timer, &QTimer::timeout, this, [this] {
+        unsigned long long generation = 0;
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            generation = state.generation;
+        }
+        if (generation == followed_generation) {
+            return;
+        }
+        followed_generation = generation;
+        for (auto* controller : player_controllers) {
+            controller->RefreshFromController();
+        }
+        // The boxes mirror the emulated controllers without acting on them
+        for (auto* checkbox : connected_controller_checkboxes) {
+            checkbox->blockSignals(true);
+        }
+        LoadPlayerControllerIndices();
+        for (auto* checkbox : connected_controller_checkboxes) {
+            checkbox->blockSignals(false);
+        }
+    });
+    follow_timer->start(250);
     ui->tabWidget->insertTab(0, assignment, tr("Players"));
     ui->tabWidget->setCurrentIndex(0);
 

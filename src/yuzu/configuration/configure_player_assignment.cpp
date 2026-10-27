@@ -80,7 +80,14 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     layout->addWidget(now_box);
     layout->addStretch(1);
 
-    connect(mode, &QComboBox::currentIndexChanged, this, [this] { UpdateModeUi(); });
+    // The mode applies at once, so the players switch while the dialog is open; closing it
+    // without applying puts the previous mode back (see the destructor)
+    original_mode = static_cast<int>(Settings::values.controller_applet_mode.GetValue());
+    connect(mode, &QComboBox::currentIndexChanged, this, [this] {
+        Settings::values.controller_applet_mode.SetValue(
+            static_cast<Settings::AppletMode>(mode->currentData().toInt()));
+        UpdateModeUi();
+    });
     connect(builtin_picker, &QComboBox::currentIndexChanged, this,
             &ConfigurePlayerAssignment::OnBuiltinPicked);
     connect(builtin_identify, &QPushButton::clicked, this,
@@ -94,7 +101,12 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     Refresh();
 }
 
-ConfigurePlayerAssignment::~ConfigurePlayerAssignment() = default;
+ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
+    if (!applied) {
+        Settings::values.controller_applet_mode.SetValue(
+            static_cast<Settings::AppletMode>(original_mode));
+    }
+}
 
 void ConfigurePlayerAssignment::LoadConfiguration() {
     const int current = static_cast<int>(Settings::values.controller_applet_mode.GetValue());
@@ -107,6 +119,7 @@ void ConfigurePlayerAssignment::LoadConfiguration() {
 void ConfigurePlayerAssignment::ApplyConfiguration() {
     Settings::values.controller_applet_mode.SetValue(
         static_cast<Settings::AppletMode>(mode->currentData().toInt()));
+    applied = true;
 }
 
 void ConfigurePlayerAssignment::UpdateModeUi() {
@@ -218,8 +231,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         engine_active = state.engine_active;
     }
     const auto selected = static_cast<Settings::AppletMode>(mode->currentData().toInt());
-    const bool applied =
-        selected == Settings::values.controller_applet_mode.GetValue();
+    const bool in_effect = selected == Settings::values.controller_applet_mode.GetValue();
 
     // Rebuild the rows when the players (or the pending swap) change; the highlight alone
     // only restyles them
@@ -293,8 +305,8 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         }
     }
 
-    if (!applied) {
-        players_note->setText(tr("The new assignment takes effect when you press OK."));
+    if (!in_effect || (IsAutomatic(selected) && !engine_active)) {
+        players_note->setText(tr("Switching..."));
     } else if (!engine_active) {
         players_note->setText(tr("Players are assigned in each player's tab."));
     } else if (players.empty()) {
@@ -303,7 +315,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         players_note->setText(tr("Press a button on a controller to see its player. Swaps last "
                                  "for this session and do not change your saved controls."));
     }
-    players_box->setVisible(applied && engine_active);
+    players_box->setVisible(in_effect && engine_active);
 }
 
 void ConfigurePlayerAssignment::OnBuiltinPicked(int index) {

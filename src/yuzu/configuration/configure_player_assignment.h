@@ -56,4 +56,7 @@ private:
     std::vector<QWidget*> player_rows;
 
     QTimer* timer = nullptr;
+    /// The mode when the dialog opened, put back unless the dialog applies
+    int original_mode = 0;
+    bool applied = false;
 };

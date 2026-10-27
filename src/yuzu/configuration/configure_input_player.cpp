@@ -901,6 +901,11 @@ void ConfigureInputPlayer::ConnectPlayer(bool connected) {
     }
 }
 
+void ConfigureInputPlayer::RefreshFromController() {
+    UpdateUI();
+    UpdateInputDeviceCombobox();
+}
+
 void ConfigureInputPlayer::UpdateInputDeviceCombobox() {
     // Skip input device persistence if "Input Devices" is set to "Any".
     if (ui->comboDevices->currentIndex() == 0) {
