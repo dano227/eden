@@ -26,6 +26,7 @@
 
 #include "common/common_types.h"
 #include "common/settings_enums.h"
+#include "common/settings_input.h"
 #include "frontend_common/content_manager.h"
 #include "input_common/drivers/tas_input.h"
 #include "qt_common/config/qt_config.h"
@@ -593,6 +594,17 @@ private:
     /// Debug overlay + event trace for comparing the logic against the real state
     std::deque<std::pair<qint64, QString>> console_debug_events;
     void PushConsoleEvent(const QString& line);
+    /// The user's own players (bindings, types, connected flags) while a console mode drives
+    /// them: the binding sets each pad carries come from here, the config file only ever
+    /// sees this, and leaving the mode puts it back
+    std::optional<std::array<Settings::PlayerInput, 10>> console_profile;
+    /// Saves the configuration, writing the user's own players while a console mode runs
+    void SaveAllConfigValues();
+    /// Puts the user's own players back (leaving a console mode, or before the config is
+    /// destroyed, which saves on destruction)
+    void RestoreConsoleProfile();
+    /// Folds edits made in the Controls tab during a console mode into the user's profile
+    void MergeConsoleProfileEdits(const std::array<Settings::PlayerInput, 10>& before);
     /// Title id of the running game, used to persist its cheat states
     u64 current_title_id = 0;
 

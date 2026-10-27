@@ -560,6 +560,9 @@ MainWindow::MainWindow(bool has_broken_vulkan)
 }
 
 MainWindow::~MainWindow() {
+    // The config saves itself on destruction: it must write the user's own players
+    RestoreConsoleProfile();
+
     // will get automatically deleted otherwise
     if (render_window->parent() == nullptr) {
         delete render_window;
@@ -616,7 +619,7 @@ void MainWindow::ControllerSelectorReconfigureControllers(
     // Don't forget to apply settings.
     QtCommon::system->HIDCore().DisableAllControllerConfiguration();
     QtCommon::system->ApplySettings();
-    config->SaveAllValues();
+    SaveAllConfigValues();
 
     UpdateStatusButtons();
 
@@ -1675,6 +1678,29 @@ Uint16 PadVendor(SDL_JoystickID id) {
     return vendor;
 }
 
+/// True when SDL reports a gyro on the pad. Under Steam Input this tells whether the virtual
+/// pad passes motion through at all (the deck's own motion may only come from a DSU server).
+bool PadHasGyro(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Gamepad* pad = SDL_OpenGamepad(id);
+    if (!pad) {
+        return false;
+    }
+    const bool gyro = SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO);
+    SDL_CloseGamepad(pad);
+    return gyro;
+}
+
+/// An SDL motion binding for a device, as InputCommon's own auto-mapping builds it.
+std::string SdlMotionParam(const std::string& guid, int port) {
+    Common::ParamPackage param;
+    param.Set("engine", "sdl");
+    param.Set("motion", 0);
+    param.Set("port", port);
+    param.Set("guid", guid);
+    return param.Serialize();
+}
+
 /// Points every SDL binding of a player at one device (guid + port), leaving keyboard and
 /// other engines alone. Bindings address pads by (guid, port), never by slot, so this is
 /// what makes a slot's pad the one that actually drives the player. True when it changed.
@@ -1715,22 +1741,97 @@ void MainWindow::PushConsoleEvent(const QString& line) {
     }
 }
 
+void MainWindow::SaveAllConfigValues() {
+    if (!console_profile) {
+        config->SaveAllValues();
+        return;
+    }
+    // A console mode drives the players at runtime; the file keeps the user's own
+    auto& players = Settings::values.players.GetValue();
+    std::swap(players, *console_profile);
+    config->SaveAllValues();
+    std::swap(players, *console_profile);
+}
+
+void MainWindow::RestoreConsoleProfile() {
+    if (!console_profile) {
+        return;
+    }
+    Settings::values.players.GetValue() = *console_profile;
+    console_profile.reset();
+}
+
+void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput, 10>& before) {
+    if (!console_profile) {
+        return;
+    }
+    const auto& after = Settings::values.players.GetValue();
+    for (size_t i = 0; i < after.size(); ++i) {
+        const auto& a = after[i];
+        const auto& b = before[i];
+        const bool edited = a.buttons != b.buttons || a.analogs != b.analogs ||
+                            a.motions != b.motions || a.controller_type != b.controller_type ||
+                            a.vibration_enabled != b.vibration_enabled ||
+                            a.vibration_strength != b.vibration_strength;
+        if (!edited) {
+            continue;
+        }
+        // The connected flags stay the engine's. An edit on the handheld's own pad goes to
+        // player one's set, the one that pad carries wherever it sits.
+        size_t target = i;
+        const auto own = pad_slots.find(builtin_pad_id);
+        if (builtin_pad_id && own != pad_slots.end() && own->second == static_cast<int>(i)) {
+            target = 0;
+        }
+        auto& p = (*console_profile)[target];
+        p.buttons = a.buttons;
+        p.analogs = a.analogs;
+        p.motions = a.motions;
+        p.controller_type = a.controller_type;
+        p.vibration_enabled = a.vibration_enabled;
+        p.vibration_strength = a.vibration_strength;
+        LOG_INFO(Frontend, "console-mode: Controls edit on P{} kept in profile P{}", i + 1,
+                 target + 1);
+    }
+}
+
 void MainWindow::ApplyConsoleControllerMode() {
     const auto mode = Settings::values.controller_applet_mode.GetValue();
     const bool handheld = mode == Settings::AppletMode::HandheldConsoleMode;
     const bool console = mode == Settings::AppletMode::ConsoleMode;
     if (!handheld && !console) {
+        if (console_profile) {
+            // Leaving the console modes: the user's own players come back exactly as they were
+            RestoreConsoleProfile();
+            pad_slots.clear();
+            pad_identity.clear();
+            LOG_INFO(Frontend, "console-mode: left, the user's players are restored");
+            if (QtCommon::system && QtCommon::system->IsPoweredOn()) {
+                QtCommon::system->HIDCore().ReloadInputDevices();
+            }
+        }
         if (builtin_seen_first) {
-            // Leaving the mode forgets the latch: re-selecting it later re-detects
+            // Leaving the mode forgets the auto latch: re-selecting it later re-detects. A
+            // declared built-in (the picker or Identify) is the user's choice and stays.
             builtin_pad_id = 0;
             builtin_identity.clear();
             builtin_seen_first = false;
             builtin_warned = false;
-            pad_slots.clear();
-            pad_identity.clear();
-            Settings::values.builtin_pad_identity.SetValue(std::string{});
+            if (!Settings::values.builtin_pad_manual.GetValue()) {
+                Settings::values.builtin_pad_identity.SetValue(std::string{});
+            }
         }
         return;
+    }
+    if (!console_profile) {
+        // Entering a console mode: the user's own players are kept aside, and everything the
+        // engine changes from here on stays runtime only (see SaveAllConfigValues)
+        console_profile = Settings::values.players.GetValue();
+        LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside");
+    }
+    if (builtin_identity.empty()) {
+        // Console Mode also needs to know the handheld's own pad: it carries player one's set
+        builtin_identity = Settings::values.builtin_pad_identity.GetValue();
     }
 
     // The live set of gamepads. The map key is the connection instance (always unique:
@@ -1841,8 +1942,9 @@ void MainWindow::ApplyConsoleControllerMode() {
         for (const auto& [id, ident] : live) {
             if (traced_insts.insert(id).second) {
                 LOG_INFO(Frontend,
-                         "console-mode: pad connected inst={} ident={} name={} idx={}", id,
-                         ident, PadName(id).toStdString(), PadPlayerIndex(id));
+                         "console-mode: pad connected inst={} ident={} name={} idx={} gyro={}",
+                         id, ident, PadName(id).toStdString(), PadPlayerIndex(id),
+                         PadHasGyro(id));
             }
         }
         for (auto it = traced_insts.begin(); it != traced_insts.end();) {
@@ -2168,12 +2270,25 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
-    // Route each live pad's player to that pad. The slot map alone is not the routing: the
-    // profile binds player N to whatever (guid, port) it was mapped with, and the driver's
-    // ports follow attach order with freed ports reused - so a slot's pad and the pad that
-    // drives the player drifted apart (P1 kept the deck while the Xbox pad sat on a dead
-    // P2). A pad the driver has not opened yet is retried next tick.
-    if (input_subsystem) {
+    // Each live pad's player gets that pad's binding set, pointed at the pad. The slot map
+    // alone is not the routing: the profile binds player N to whatever (guid, port) it was
+    // mapped with, and the driver's ports follow attach order with freed ports reused - so a
+    // slot's pad and the pad that drives the player drifted apart (P1 kept the deck while
+    // the Xbox pad sat on a dead P2). The sets come from the user's own profile and follow
+    // the pad, not the slot: the handheld's own pad carries player one's set (its gyro too,
+    // even when that is a DSU server rather than SDL) to whatever slot it sits on; an
+    // external pad takes its slot's set, minus the handheld's non-SDL motion, plus its own
+    // SDL gyro when it has one and the set has no motion. A pad the driver has not opened
+    // yet is retried next tick.
+    if (input_subsystem && console_profile) {
+        const auto& profile = *console_profile;
+        const auto is_handheld_motion = [&profile](const std::string& raw) {
+            if (raw.empty() || Common::ParamPackage{raw}.Get("engine", "") == "sdl") {
+                return false;
+            }
+            return std::find(profile[0].motions.begin(), profile[0].motions.end(), raw) !=
+                   profile[0].motions.end();
+        };
         for (const auto& [id, ident] : live) {
             const auto it = pad_slots.find(id);
             if (it == pad_slots.end() || it->second < 0 ||
@@ -2184,9 +2299,37 @@ void MainWindow::ApplyConsoleControllerMode() {
             if (!binding) {
                 continue;
             }
-            if (RouteSdlBindings(players[it->second], binding->first, binding->second)) {
-                LOG_INFO(Frontend, "console-mode: route P{} -> inst={} guid={} port={}",
-                         it->second + 1, id, binding->first, binding->second);
+            const int slot = it->second;
+            const bool is_builtin = builtin_valid && id == builtin_match_id;
+            const auto& own = profile[is_builtin ? 0 : slot];
+            Settings::PlayerInput want = players[slot];
+            want.buttons = own.buttons;
+            want.analogs = own.analogs;
+            want.motions = own.motions;
+            RouteSdlBindings(want, binding->first, binding->second);
+            if (!is_builtin) {
+                for (std::string& motion : want.motions) {
+                    if (is_handheld_motion(motion)) {
+                        motion.clear();
+                    }
+                }
+                const bool no_motion =
+                    std::all_of(want.motions.begin(), want.motions.end(),
+                                [](const std::string& m) { return m.empty(); });
+                if (no_motion && PadHasGyro(id)) {
+                    want.motions.fill(SdlMotionParam(binding->first, binding->second));
+                }
+            }
+            auto& player = players[slot];
+            if (player.buttons != want.buttons || player.analogs != want.analogs ||
+                player.motions != want.motions) {
+                player.buttons = want.buttons;
+                player.analogs = want.analogs;
+                player.motions = want.motions;
+                LOG_INFO(Frontend,
+                         "console-mode: P{} <- inst={} guid={} port={} set=P{}{}", slot + 1, id,
+                         binding->first, binding->second, is_builtin ? 1 : slot + 1,
+                         is_builtin ? " (handheld)" : "");
                 changed = true;
             }
         }
@@ -2885,7 +3028,7 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
     // Save configurations
     UpdateUISettings();
     game_list->SaveInterfaceLayout();
-    config->SaveAllValues();
+    SaveAllConfigValues();
 
     u64 title_id{0};
     current_title_id = 0;
@@ -3733,7 +3876,7 @@ void MainWindow::OnLinkToRyujinx(const u64& program_id) {
         UISettings::values.ryujinx_link_paths.remove(program_id);
     }
 
-    config->SaveAllValues();
+    SaveAllConfigValues();
 }
 
 void MainWindow::OnMenuLoadFile() {
@@ -4106,7 +4249,7 @@ void MainWindow::OnExit() {
 
 void MainWindow::OnSaveConfig() {
     QtCommon::system->ApplySettings();
-    config->SaveAllValues();
+    SaveAllConfigValues();
 }
 
 void MainWindow::ErrorDisplayDisplayError(QString error_code, QString error_text) {
@@ -4401,6 +4544,7 @@ void MainWindow::OnConfigure() {
     connect(&configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,
             &MainWindow::OnGameListRefresh);
 
+    const auto players_before = Settings::values.players.GetValue();
     const auto result = configure_dialog.exec();
     if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&
         !UISettings::values.reset_to_defaults) {
@@ -4433,6 +4577,7 @@ void MainWindow::OnConfigure() {
 
         Settings::values.disabled_addons.clear();
 
+        RestoreConsoleProfile();
         config = std::make_unique<QtConfig>();
         UISettings::values.reset_to_defaults = false;
 
@@ -4444,6 +4589,7 @@ void MainWindow::OnConfigure() {
         SetDefaultUIGeometry();
         RestoreUIState();
     }
+    MergeConsoleProfileEdits(players_before);
     InitializeHotkeys();
 
     if (UISettings::values.theme != old_theme) {
@@ -4474,7 +4620,7 @@ void MainWindow::OnConfigure() {
 
     UISettings::values.configuration_applied = false;
 
-    config->SaveAllValues();
+    SaveAllConfigValues();
 
     if ((UISettings::values.hide_mouse || Settings::values.mouse_panning) && emulation_running) {
         render_window->installEventFilter(render_window);
@@ -4710,7 +4856,7 @@ void MainWindow::OpenPerGameConfiguration(u64 title_id, const std::string& file_
     UISettings::values.configuration_applied = false;
 
     if (!is_powered_on) {
-        config->SaveAllValues();
+        SaveAllConfigValues();
     }
 }
 
