@@ -1908,7 +1908,26 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
         auto& p = (*console_profile)[target];
         bool edited = MergeMappings(p.buttons, b.buttons, a.buttons);
         edited = MergeMappings(p.analogs, b.analogs, a.analogs) || edited;
-        edited = MergeMappings(p.motions, b.motions, a.motions) || edited;
+        // An external pad never gets the handheld's own non-SDL motion (a DSU server on the
+        // deck): on a player the handheld does not hold, that binding being absent is the
+        // engine's doing, never an edit, and must not wipe it from the handheld's set (a swap
+        // closing the dialog did, through P1 held by an Xbox pad)
+        auto edited_motions = a.motions;
+        if (target != 0 || !(builtin_pad_id && own != pad_slots.end() &&
+                             own->second == static_cast<int>(i))) {
+            const auto& handheld_motions = (*console_profile)[0].motions;
+            for (size_t k = 0; k < edited_motions.size(); ++k) {
+                const std::string& kept = p.motions[k];
+                const bool handheld_motion =
+                    !kept.empty() && Common::ParamPackage{kept}.Get("engine", "") != "sdl" &&
+                    std::find(handheld_motions.begin(), handheld_motions.end(), kept) !=
+                        handheld_motions.end();
+                if (handheld_motion && edited_motions[k].empty()) {
+                    edited_motions[k] = b.motions[k];
+                }
+            }
+        }
+        edited = MergeMappings(p.motions, b.motions, edited_motions) || edited;
         if (a.controller_type != b.controller_type || a.vibration_enabled != b.vibration_enabled ||
             a.vibration_strength != b.vibration_strength) {
             p.controller_type = a.controller_type;
