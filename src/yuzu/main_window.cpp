@@ -2239,9 +2239,40 @@ void MainWindow::ApplyConsoleControllerMode() {
                     holder = id;
                 }
             }
-        } else if (live.size() == 1) {
-            count = 1;
-            holder = live.begin()->first;
+        }
+        bool adopted = false;
+        if (count == 0) {
+            // No pad holds the stored handle (Steam may hand out a new one after a reboot or
+            // an update), or none is stored yet: the deck's own controller is the one Steam
+            // reports with no gamepad type ("#SettingsController_SteamController"), every
+            // other controller has a real one. Adopt it when exactly one pad fits.
+            int fits = 0;
+            u32 fit = 0;
+            for (const auto& [id, ident] : live) {
+                if (SDL_GetGamepadTypeForID(id) == SDL_GAMEPAD_TYPE_UNKNOWN &&
+                    PadSteamHandle(id) != 0) {
+                    ++fits;
+                    fit = id;
+                }
+            }
+            if (fits == 1) {
+                count = 1;
+                holder = fit;
+                adopted = true;
+            } else if (want.empty() && live.size() == 1) {
+                count = 1;
+                holder = live.begin()->first;
+            }
+        }
+        if (adopted) {
+            const std::string handle = fmt::format("{:#x}", PadSteamHandle(holder));
+            if (handle != want) {
+                Settings::values.builtin_pad_steam_handle.SetValue(handle);
+                LOG_INFO(Frontend,
+                         "console-mode: builtin adopted inst={} as the deck's controller, "
+                         "Steam handle {} -> {}",
+                         holder, want.empty() ? std::string{"(none)"} : want, handle);
+            }
         }
         static std::string last_resolved;
         const std::string resolved =
