@@ -1691,6 +1691,20 @@ bool PadHasGyro(SDL_JoystickID id) {
     return gyro;
 }
 
+/// Steam Input's handle for the physical controller behind a pad (0 when not under Steam
+/// Input, or not known). Steam's virtual pads are fixed slots that Steam refills in its own
+/// order, so this handle is the only thing that could tell which physical pad came back.
+Uint64 PadSteamHandle(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Gamepad* pad = SDL_OpenGamepad(id);
+    if (!pad) {
+        return 0;
+    }
+    const Uint64 handle = SDL_GetGamepadSteamHandle(pad);
+    SDL_CloseGamepad(pad);
+    return handle;
+}
+
 /// An SDL motion binding for a device, as InputCommon's own auto-mapping builds it.
 std::string SdlMotionParam(const std::string& guid, int port) {
     Common::ParamPackage param;
@@ -2031,9 +2045,12 @@ void MainWindow::ApplyConsoleControllerMode() {
         for (const auto& [id, ident] : live) {
             if (traced_insts.insert(id).second) {
                 LOG_INFO(Frontend,
-                         "console-mode: pad connected inst={} ident={} name={} idx={} gyro={}",
+                         "console-mode: pad connected inst={} ident={} name={} idx={} gyro={} "
+                         "steam_handle={:#x} type={} real_type={}",
                          id, ident, PadName(id).toStdString(), PadPlayerIndex(id),
-                         PadHasGyro(id));
+                         PadHasGyro(id), PadSteamHandle(id),
+                         static_cast<int>(SDL_GetGamepadTypeForID(id)),
+                         static_cast<int>(SDL_GetRealGamepadTypeForID(id)));
             }
         }
         for (auto it = traced_insts.begin(); it != traced_insts.end();) {
