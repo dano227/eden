@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <mutex>
 
 #include <QComboBox>
@@ -167,10 +168,13 @@ void ConfigureApplets::RefreshBuiltinPicker() {
         QString::fromStdString(Settings::values.builtin_pad_identity.GetValue());
     const QString handle =
         QString::fromStdString(Settings::values.builtin_pad_steam_handle.GetValue());
-    const QString stored = identity.startsWith(QStringLiteral("steamhandle:")) || handle.isEmpty()
-                               ? identity
-                               : QStringLiteral("steamhandle:") + handle;
-    const bool manual = Settings::values.builtin_pad_manual.GetValue();
+    // The handheld of the way Eden was launched: the Steam handle under Steam Input, the raw
+    // pad's identity otherwise (each is kept separately)
+    const bool steam = std::getenv("SteamGameId") != nullptr || std::getenv("SteamAppId") != nullptr;
+    const QString stored = steam ? (handle.isEmpty() ? QString{} : QStringLiteral("steamhandle:") + handle)
+                                 : identity;
+    // Under Steam a stored handle is always a declaration (or the latched lone pad)
+    const bool manual = steam ? !handle.isEmpty() : Settings::values.builtin_pad_manual.GetValue();
     QString name = tr("not set");
     bool present = false;
     int stored_index = -1;
@@ -219,8 +223,16 @@ void ConfigureApplets::OnBuiltinPicked(int index) {
         Settings::values.builtin_pad_steam_handle.SetValue(std::string{});
         Settings::values.builtin_pad_manual.SetValue(false);
     } else {
-        Settings::values.builtin_pad_identity.SetValue(ident.toStdString());
-        Settings::values.builtin_pad_manual.SetValue(true);
+        // Under Steam the entries are Steam handles: they set the Steam launches' handheld
+        // and leave the direct launches' identity alone (each way of launching keeps its own)
+        const QString prefix = QStringLiteral("steamhandle:");
+        if (ident.startsWith(prefix)) {
+            Settings::values.builtin_pad_steam_handle.SetValue(
+                ident.mid(prefix.size()).toStdString());
+        } else {
+            Settings::values.builtin_pad_identity.SetValue(ident.toStdString());
+            Settings::values.builtin_pad_manual.SetValue(true);
+        }
     }
     RefreshBuiltinPicker();
 }

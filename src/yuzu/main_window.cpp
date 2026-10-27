@@ -1912,6 +1912,22 @@ void MainWindow::ApplyConsoleControllerMode() {
     const auto mode = Settings::values.controller_applet_mode.GetValue();
     const bool handheld = mode == Settings::AppletMode::HandheldConsoleMode;
     const bool console = mode == Settings::AppletMode::ConsoleMode;
+    // The handheld's own pad is stored once per way of launching, since the pads differ
+    // completely: under Steam it is the Steam handle (builtin_pad_steam_handle), launched
+    // directly it is the raw pad's identity (builtin_pad_identity, with builtin_pad_manual
+    // when declared). Older builds stored the Steam virtual pad's GUID as the identity, which
+    // no raw pad ever has: launched directly, drop it so auto-detection finds the deck again.
+    if (!LaunchedThroughSteam()) {
+        const std::string identity = Settings::values.builtin_pad_identity.GetValue();
+        if (identity.size() >= 25 && identity.starts_with("guid:") &&
+            identity.compare(5 + 8, 4, "de28") == 0 && identity.compare(5 + 16, 4, "ff11") == 0) {
+            Settings::values.builtin_pad_identity.SetValue(std::string{});
+            Settings::values.builtin_pad_manual.SetValue(false);
+            LOG_INFO(Frontend, "console-mode: stored handheld was a Steam virtual pad ({}), "
+                               "back to auto-detect for direct launches",
+                     identity);
+        }
+    }
     // A declaration with no pad behind it (older builds wiped the identity when leaving the
     // mode but kept the flag) would pin the engine to "no handheld" forever: undo it.
     if (Settings::values.builtin_pad_manual.GetValue() &&
@@ -2037,11 +2053,17 @@ void MainWindow::ApplyConsoleControllerMode() {
                         builtin_identity = ident;
                         builtin_seen_first = true;
                         builtin_warned = false;
-                        Settings::values.builtin_pad_identity.SetValue(ident);
-                        Settings::values.builtin_pad_manual.SetValue(true);
+                        // Each way of launching keeps its own: the other one's stays
                         const Uint64 handle = LaunchedThroughSteam() ? PadSteamHandle(id) : 0;
-                        Settings::values.builtin_pad_steam_handle.SetValue(
-                            handle ? fmt::format("{:#x}", handle) : std::string{});
+                        if (LaunchedThroughSteam()) {
+                            if (handle) {
+                                Settings::values.builtin_pad_steam_handle.SetValue(
+                                    fmt::format("{:#x}", handle));
+                            }
+                        } else {
+                            Settings::values.builtin_pad_identity.SetValue(ident);
+                            Settings::values.builtin_pad_manual.SetValue(true);
+                        }
                         LOG_INFO(Frontend,
                                  "console-mode: identify captured inst={} ident={} "
                                  "steam_handle={:#x}",
@@ -2060,17 +2082,16 @@ void MainWindow::ApplyConsoleControllerMode() {
         constexpr std::string_view prefix = "steamhandle:";
         if (declared.starts_with(prefix)) {
             const std::string handle = declared.substr(prefix.size());
-            std::string guid_ident;
             for (const auto& [id, ident] : live) {
                 if (fmt::format("{:#x}", PadSteamHandle(id)) == handle) {
-                    guid_ident = PadIdentity(id);
                     builtin_pad_id = id;
                     break;
                 }
             }
+            // The identity is the direct launches' own: a Steam pick only sets the handle
             Settings::values.builtin_pad_steam_handle.SetValue(handle);
-            Settings::values.builtin_pad_identity.SetValue(guid_ident);
-            builtin_identity = guid_ident;
+            Settings::values.builtin_pad_identity.SetValue(std::string{});
+            Settings::values.builtin_pad_manual.SetValue(false);
             LOG_INFO(Frontend, "console-mode: picker declared Steam handle {} inst={}", handle,
                      builtin_pad_id);
         }
@@ -2094,9 +2115,9 @@ void MainWindow::ApplyConsoleControllerMode() {
             builtin_identity.clear();
             builtin_seen_first = false;
             builtin_warned = false;
+            // (The Steam handle stays: it is the same controller in every session)
             if (!Settings::values.builtin_pad_manual.GetValue()) {
                 Settings::values.builtin_pad_identity.SetValue(std::string{});
-                Settings::values.builtin_pad_steam_handle.SetValue(std::string{});
             }
         }
         return;
@@ -2299,7 +2320,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                 }
             }
         }
-        if (!builtin_pad_id && !manual) {
+        // (Under Steam the Steam handle resolves the handheld above; this latch stores the
+        // direct launches' identity and must not take a Steam pad's)
+        if (!builtin_pad_id && !manual && !LaunchedThroughSteam()) {
             auto handheld_candidate = [&]() -> u32 {
                 u32 found = 0;
                 int matches = 0;
