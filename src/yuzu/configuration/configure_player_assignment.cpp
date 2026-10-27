@@ -153,7 +153,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* layout = new QVBoxLayout(this);
 
     // The controller applet's mode: the real applet, or one of the custom frontend's modes
-    auto* mode_box = new QGroupBox(tr("Controller Configuration"), this);
+    auto* mode_box = new QGroupBox(tr("Controller Assignment Handler"), this);
     auto* mode_layout = new QVBoxLayout(mode_box);
     mode = new QComboBox(mode_box);
     mode->addItem(tr("Custom"));
@@ -173,9 +173,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     };
     add_mode(tr("Modern"), tr("Each controller that connects becomes the next player."),
              Settings::AppletMode::ConsoleMode);
-    add_mode(tr("Handheld"),
-             tr("The handheld's controls are player 1 only while no other controller is "
-                "connected."),
+    add_mode(tr("Docked Handheld (Couch Co-Op)"),
+             tr("For a handheld connected to a TV or monitor, played with other controllers."),
              Settings::AppletMode::HandheldConsoleMode);
     add_mode(tr("Disabled"),
              tr("Players are set in each player's tab; games get them without a window."),
@@ -295,9 +294,10 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
                               "to the next available player when it connects."));
         break;
     case Settings::AppletMode::HandheldConsoleMode:
-        mode_info->setText(tr("Controller assignment is automatic. Connected controllers take "
-                              "priority over the handheld's built-in controls, which are used "
-                              "only when no other controller is connected."));
+        mode_info->setText(tr("Controller assignment is automatic. For handhelds connected to a "
+                              "TV or monitor: connected controllers take priority, and the "
+                              "built-in controls are used only when no other controller is "
+                              "connected."));
         break;
     case Settings::AppletMode::Disabled:
         mode_info->setText(tr("Controllers are assigned in each player's tab. Games use the "
