@@ -1781,10 +1781,23 @@ void MainWindow::SaveAllConfigValues() {
     std::swap(players, *console_profile);
 }
 
+namespace {
+/// PROBE: the handheld set's motion bindings, to trace what clears the DSU gyro
+std::string MotionTrace(const Settings::PlayerInput& player) {
+    std::string out;
+    for (const auto& motion : player.motions) {
+        out += '[' + motion + ']';
+    }
+    return out;
+}
+} // Anonymous namespace
+
 void MainWindow::RestoreConsoleProfile() {
     if (!console_profile) {
         return;
     }
+    LOG_INFO(Frontend, "console-mode: PROBE restore, profile P1 motions {}",
+             MotionTrace((*console_profile)[0]));
     // Booting a game switches the players to its own copy (the per-game config read), and
     // the engine drove that copy since. Both get the user's players back, or the global copy
     // keeps the engine's pre-boot state and that is what the next save writes.
@@ -1877,6 +1890,19 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
     }
     // The Controls tab edits the global copy, whatever copy a running game uses
     const auto& after = Settings::values.players.GetValue(true);
+    // The handheld's own non-SDL motion (a DSU server on the deck) is held back from every
+    // external pad: whatever the dialog makes of a player the handheld does not hold, it must
+    // never clear that binding from the handheld's set. Kept here and put back at the end.
+    const auto handheld_motions_kept = (*console_profile)[0].motions;
+    const auto own_slot = pad_slots.find(builtin_pad_id);
+    // (While the handheld holds a player, edits on that player are its set's own: only a
+    // handheld without a player - externals around - cannot have edited it)
+    const bool handheld_has_player = builtin_pad_id && own_slot != pad_slots.end();
+    LOG_INFO(Frontend,
+             "console-mode: PROBE merge start, profile P1 motions {} before {} after {} "
+             "handheld_has_player={}",
+             MotionTrace((*console_profile)[0]), MotionTrace(before[0]), MotionTrace(after[0]),
+             handheld_has_player);
     // The SDL device (guid, port) a player's bindings point at
     const auto sdl_device = [](const Settings::PlayerInput& player) {
         for (const std::string& raw : player.buttons) {
@@ -1941,6 +1967,20 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
         LOG_INFO(Frontend, "console-mode: Controls edit on P{} kept in profile P{}", i + 1,
                  target + 1);
     }
+
+    if (!handheld_has_player) {
+        auto& motions = (*console_profile)[0].motions;
+        for (size_t k = 0; k < motions.size(); ++k) {
+            const std::string& kept = handheld_motions_kept[k];
+            if (motions[k].empty() && !kept.empty() &&
+                Common::ParamPackage{kept}.Get("engine", "") != "sdl") {
+                motions[k] = kept;
+                LOG_INFO(Frontend, "console-mode: kept the handheld's motion {} on P1", kept);
+            }
+        }
+    }
+    LOG_INFO(Frontend, "console-mode: PROBE merge end, profile P1 motions {}",
+             MotionTrace((*console_profile)[0]));
 
     // A controller swap from the Controls tab: a player whose device was changed to the
     // device another player's pad holds trades slots with it (or takes it, when the player had
@@ -2236,7 +2276,9 @@ void MainWindow::ApplyConsoleControllerMode() {
         // Entering a console mode: the user's own players are kept aside, and everything the
         // engine changes from here on stays runtime only (see SaveAllConfigValues)
         console_profile = Settings::values.players.GetValue(true);
-        LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside");
+        LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside "
+                           "(PROBE P1 motions {})",
+                 MotionTrace((*console_profile)[0]));
     }
     if (builtin_identity.empty()) {
         // Console Mode also needs to know the handheld's own pad: it carries player one's set
