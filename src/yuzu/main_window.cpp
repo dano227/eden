@@ -1601,7 +1601,10 @@ bool IsSteamVirtualPad(SDL_JoystickID id) {
     }
     const SDL_GUID guid = SDL_GetJoystickGUID(js);
     SDL_CloseJoystick(js);
-    return guid.data[4] == 0xDE && guid.data[5] == 0x28;
+    // Valve makes real controllers too (the deck's own, unhidden for its motion): the virtual
+    // gamepad product (0x11FF, bytes 8-9) is what marks Steam's virtual pads
+    return guid.data[4] == 0xDE && guid.data[5] == 0x28 && guid.data[8] == 0xFF &&
+           guid.data[9] == 0x11;
 }
 
 /// The OS device node of a pad (e.g. /dev/input/event5): sometimes the one identity a
