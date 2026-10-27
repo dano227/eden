@@ -6,14 +6,20 @@
 #include <cstdlib>
 #include <mutex>
 
+#include <QApplication>
 #include <QComboBox>
-#include <QGridLayout>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFrame>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QRadioButton>
 #include <QButtonGroup>
+#include <QRadioButton>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -32,6 +38,86 @@ bool IsAutomatic(Settings::AppletMode mode) {
            mode == Settings::AppletMode::HandheldConsoleMode;
 }
 
+constexpr int MaxPlayers = 8;
+constexpr char PlayerMime[] = "application/x-eden-player";
+
+/// One player in the list: a click rumbles its controller, and a long press (or a drag) picks
+/// it up to drop on another player, which swaps the two
+class PlayerRow : public QFrame {
+public:
+    PlayerRow(int player_, QWidget* parent) : QFrame(parent), player{player_} {
+        setObjectName(QStringLiteral("playerRow"));
+        setAcceptDrops(true);
+        long_press.setSingleShot(true);
+        long_press.setInterval(400);
+        QObject::connect(&long_press, &QTimer::timeout, this, [this] { StartDrag(); });
+    }
+
+    std::function<void(int)> on_click;
+    std::function<void(int, int)> on_drop;
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            press_pos = event->position().toPoint();
+            pressed = true;
+            long_press.start();
+        }
+        QFrame::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (pressed && (event->position().toPoint() - press_pos).manhattanLength() >=
+                           QApplication::startDragDistance()) {
+            StartDrag();
+        }
+        QFrame::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (pressed && long_press.isActive() && on_click) {
+            on_click(player);
+        }
+        pressed = false;
+        long_press.stop();
+        QFrame::mouseReleaseEvent(event);
+    }
+
+    void dragEnterEvent(QDragEnterEvent* event) override {
+        if (event->mimeData()->hasFormat(QString::fromLatin1(PlayerMime))) {
+            event->acceptProposedAction();
+        }
+    }
+
+    void dropEvent(QDropEvent* event) override {
+        const int from = event->mimeData()->data(QString::fromLatin1(PlayerMime)).toInt();
+        if (from != player && on_drop) {
+            on_drop(from, player);
+        }
+        event->acceptProposedAction();
+    }
+
+private:
+    void StartDrag() {
+        if (!pressed) {
+            return;
+        }
+        pressed = false;
+        long_press.stop();
+        auto* mime = new QMimeData;
+        mime->setData(QString::fromLatin1(PlayerMime), QByteArray::number(player));
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mime);
+        drag->setPixmap(grab());
+        drag->exec(Qt::MoveAction);
+    }
+
+    int player;
+    bool pressed = false;
+    QPoint press_pos;
+    QTimer long_press;
+};
+
 } // Anonymous namespace
 
 ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(parent) {
@@ -41,8 +127,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* mode_box = new QGroupBox(tr("Controller Configuration"), this);
     auto* mode_layout = new QVBoxLayout(mode_box);
     mode = new QComboBox(mode_box);
-    mode->addItem(tr("Custom frontend"));
-    mode->addItem(tr("Real applet"));
+    mode->addItem(tr("Custom"));
+    mode->addItem(tr("Real Hardware"));
     mode_layout->addWidget(mode);
 
     frontend_row = new QWidget(mode_box);
@@ -96,9 +182,9 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     now_box = new QGroupBox(tr("Players now"), this);
     auto* now_layout = new QVBoxLayout(now_box);
     players_box = new QWidget(now_box);
-    players_grid = new QGridLayout(players_box);
-    players_grid->setContentsMargins(0, 0, 0, 0);
-    players_grid->setColumnStretch(1, 1);
+    players_list = new QVBoxLayout(players_box);
+    players_list->setContentsMargins(0, 0, 0, 0);
+    players_list->setSpacing(2);
     now_layout->addWidget(players_box);
     players_note = new QLabel(now_box);
     players_note->setWordWrap(true);
@@ -307,8 +393,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     const bool in_effect = selected == Settings::values.controller_applet_mode.GetValue();
 
-    // Rebuild the rows when the players (or the pending swap) change; the highlight alone
-    // only restyles them
+    // Rebuild the rows when the players (or the pending swap) change; activity only restyles
     QString signature = QString::number(swap_from) + QLatin1Char(';');
     for (const auto& row : players) {
         signature += QString::number(row.player) + QLatin1Char(':') +
@@ -319,70 +404,97 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     }
     if (signature != players_signature) {
         players_signature = signature;
-        for (QWidget* row : player_rows) {
-            players_grid->removeWidget(row);
+        for (QFrame* row : player_rows) {
+            players_list->removeWidget(row);
             row->hide();
             row->deleteLater();
         }
         player_rows.clear();
-        swap_buttons.clear();
-        swap_button_players.clear();
-        int line = 0;
-        const auto add = [&](QWidget* widget, int column) {
-            players_grid->addWidget(widget, line, column);
-            player_rows.push_back(widget);
-        };
-        for (const auto& row : players) {
-            add(new QLabel(QStringLiteral("P%1").arg(row.player + 1), players_box), 0);
-            add(new QLabel(QString::fromStdString(row.name), players_box), 1);
-            auto* swap = new QPushButton(players_box);
+        row_players.clear();
+        for (const auto& entry : players) {
+            const int player = entry.player;
+            auto* row = new PlayerRow(player, players_box);
+            row->setToolTip(tr("Click to rumble this controller. Hold, then drop on another "
+                               "player to swap them."));
+            row->on_click = [this](int p) { RequestRumble(p); };
+            row->on_drop = [this](int from, int to) { RequestSwap(from, to); };
+            auto* line = new QHBoxLayout(row);
+            line->setContentsMargins(4, 2, 4, 2);
+            line->addWidget(new QLabel(QStringLiteral("P%1").arg(player + 1), row));
+            line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
+
+            auto* up = new QPushButton(QStringLiteral("\u25B2"), row);
+            up->setToolTip(tr("Swap with P%1").arg(player));
+            up->setEnabled(player > 0);
+            connect(up, &QPushButton::clicked, this,
+                    [this, player] { RequestSwap(player, player - 1); });
+            line->addWidget(up);
+            auto* down = new QPushButton(QStringLiteral("\u25BC"), row);
+            down->setToolTip(tr("Swap with P%1").arg(player + 2));
+            down->setEnabled(player + 1 < MaxPlayers);
+            connect(down, &QPushButton::clicked, this,
+                    [this, player] { RequestSwap(player, player + 1); });
+            line->addWidget(down);
+            for (auto* arrow : {up, down}) {
+                arrow->setFixedWidth(arrow->sizeHint().height() + 6);
+            }
+
+            auto* swap = new QPushButton(row);
             if (swap_from < 0) {
                 swap->setText(tr("Swap"));
-                swap->setToolTip(tr("Swap this controller with another player's"));
-            } else if (swap_from == row.player) {
+            } else if (swap_from == player) {
                 swap->setText(tr("Cancel"));
             } else {
                 swap->setText(tr("Swap with P%1").arg(swap_from + 1));
             }
-            const int player = row.player;
             connect(swap, &QPushButton::clicked, this, [this, player] { OnSwapPressed(player); });
-            add(swap, 2);
-            swap_buttons.push_back(swap);
-            swap_button_players.push_back(row.player);
-            ++line;
+            line->addWidget(swap);
+
+            auto* settings = new QPushButton(tr("Settings"), row);
+            settings->setToolTip(tr("Open Player %1's tab").arg(player + 1));
+            settings->setEnabled(static_cast<bool>(open_player_tab));
+            connect(settings, &QPushButton::clicked, this, [this, player] {
+                if (open_player_tab) {
+                    open_player_tab(player);
+                }
+            });
+            line->addWidget(settings);
+
+            players_list->addWidget(row);
+            player_rows.push_back(row);
+            row_players.push_back(player);
         }
         if (!handheld_name.empty() && !handheld_has_player) {
-            add(new QLabel(QStringLiteral("—"), players_box), 0);
-            add(new QLabel(tr("%1 (built-in, not a player while other controllers are "
-                              "connected)")
-                               .arg(QString::fromStdString(handheld_name)),
-                           players_box),
-                1);
-            ++line;
+            auto* row = new QFrame(players_box);
+            auto* line = new QHBoxLayout(row);
+            line->setContentsMargins(4, 2, 4, 2);
+            line->addWidget(new QLabel(QStringLiteral("\u2014"), row));
+            line->addWidget(new QLabel(tr("%1 (built-in, not a player while other controllers "
+                                          "are connected)")
+                                           .arg(QString::fromStdString(handheld_name)),
+                                       row),
+                            1);
+            players_list->addWidget(row);
+            player_rows.push_back(row);
+            row_players.push_back(-1);
         }
     }
 
-    // Light a row while its controller has an input held: pressing a button shows which
+    // A row lights while its controller has an input held: pressing a button shows which
     // controller is which player
-    for (size_t k = 0; k < swap_buttons.size(); ++k) {
+    for (size_t k = 0; k < player_rows.size(); ++k) {
         const auto it = std::find_if(players.begin(), players.end(), [&](const auto& row) {
-            return row.player == swap_button_players[k];
+            return row.player == row_players[k];
         });
         const bool active = it != players.end() && it->active;
-        const int index = players_grid->indexOf(swap_buttons[k]);
-        int grid_row = 0, column = 0, row_span = 0, column_span = 0;
-        players_grid->getItemPosition(index, &grid_row, &column, &row_span, &column_span);
-        if (auto* name = players_grid->itemAtPosition(grid_row, 1)) {
-            name->widget()->setStyleSheet(active ? QStringLiteral("background-color: rgba(60, "
-                                                                  "120, 230, 190); color: white;")
-                                                 : QString{});
-        }
+        player_rows[k]->setStyleSheet(
+            active ? QStringLiteral("QFrame#playerRow { background-color: rgba(60, 120, 230, "
+                                    "190); } QFrame#playerRow QLabel { color: white; }")
+                   : QString{});
     }
 
     if (!in_effect || (IsAutomatic(selected) && !engine_active)) {
         players_note->setText(tr("Switching..."));
-    } else if (!engine_active) {
-        players_note->setText(tr("Players are assigned in each player's tab."));
     } else if (players.empty()) {
         players_note->setText(tr("No controller is a player right now."));
     } else {
@@ -424,11 +536,30 @@ void ConfigurePlayerAssignment::OnSwapPressed(int player) {
         swap_from = player;
     } else {
         if (swap_from != player) {
-            auto& state = Common::GetControllerConsoleState();
-            std::scoped_lock lock{state.mutex};
-            state.swap_requests.emplace_back(swap_from, player);
+            RequestSwap(swap_from, player);
         }
         swap_from = -1;
     }
+    RefreshPlayers();
+}
+
+void ConfigurePlayerAssignment::RequestSwap(int a, int b) {
+    if (a == b || a < 0 || b < 0 || a >= MaxPlayers || b >= MaxPlayers) {
+        return;
+    }
+    auto& state = Common::GetControllerConsoleState();
+    std::scoped_lock lock{state.mutex};
+    state.swap_requests.emplace_back(a, b);
+}
+
+void ConfigurePlayerAssignment::RequestRumble(int player) {
+    auto& state = Common::GetControllerConsoleState();
+    std::scoped_lock lock{state.mutex};
+    state.rumble_requests.push_back(player);
+}
+
+void ConfigurePlayerAssignment::SetOpenPlayerTab(std::function<void(int)> open) {
+    open_player_tab = std::move(open);
+    players_signature.clear();
     RefreshPlayers();
 }

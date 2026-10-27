@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <functional>
 #include <vector>
 
 #include <QString>
@@ -10,7 +11,8 @@
 
 class QButtonGroup;
 class QComboBox;
-class QGridLayout;
+class QFrame;
+class QVBoxLayout;
 class QLabel;
 class QPushButton;
 class QTimer;
@@ -28,6 +30,9 @@ public:
 
     void ApplyConfiguration();
 
+    /// How to bring a player's tab to the front (the settings dialog owns the tabs)
+    void SetOpenPlayerTab(std::function<void(int)> open);
+
 private:
     void LoadConfiguration();
     /// The controller applet mode the controls select
@@ -40,6 +45,8 @@ private:
     void OnBuiltinPicked(int index);
     void OnIdentifyPressed();
     void OnSwapPressed(int player);
+    void RequestSwap(int a, int b);
+    void RequestRumble(int player);
 
     /// Custom frontend or Real applet; the frontend's modes are radio buttons below it
     QComboBox* mode = nullptr;
@@ -55,14 +62,15 @@ private:
     QString builtin_signature;
 
     QWidget* players_box = nullptr;
-    QGridLayout* players_grid = nullptr;
+    QVBoxLayout* players_list = nullptr;
     QLabel* players_note = nullptr;
     QString players_signature;
     /// The player whose Swap was pressed first, waiting for the second (-1: none)
     int swap_from = -1;
-    std::vector<QPushButton*> swap_buttons;
-    std::vector<int> swap_button_players;
-    std::vector<QWidget*> player_rows;
+    /// The rows and the player each shows, for restyling them while a controller is active
+    std::vector<QFrame*> player_rows;
+    std::vector<int> row_players;
+    std::function<void(int)> open_player_tab;
 
     QTimer* timer = nullptr;
     /// The mode when the dialog opened, put back unless the dialog applies

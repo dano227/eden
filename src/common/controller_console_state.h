@@ -39,6 +39,8 @@ struct ControllerConsoleState {
     /// Swaps requested by the Players tab, as (player a, player b); the engine applies them
     /// on its next tick, for this session only (the saved controller setup is untouched)
     std::vector<std::pair<int, int>> swap_requests;
+    /// Players whose controller the Controllers tab asked to rumble (a click on its row)
+    std::vector<int> rumble_requests;
     /// Bumped whenever the engine reloads the emulated controllers (a swap, a pad arriving or
     /// leaving): the Controls page refreshes its player tabs from them when it changes
     unsigned long long generation = 0;

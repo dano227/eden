@@ -152,6 +152,15 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     // The Players tab comes first: how players are assigned, and who is which player now
     assignment = new ConfigurePlayerAssignment(this);
     assignment->setAccessibleName(tr("Controllers"));
+    assignment->SetOpenPlayerTab([this](int player) {
+        for (QWidget* parent = player_tabs[player]->parentWidget(); parent;
+             parent = parent->parentWidget()) {
+            if (auto* tabs = qobject_cast<QTabWidget*>(parent)) {
+                tabs->setCurrentWidget(player_tabs[player]);
+                return;
+            }
+        }
+    });
 
     {
         auto& state = Common::GetControllerConsoleState();
@@ -194,8 +203,8 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                 }
             }
             player_controllers[i]->SetConnectionLocked(automatic);
-            connected_controller_checkboxes[i]->setEnabled(!automatic);
         }
+        ui->connectedControllers->setVisible(!automatic);
 
         if (generation == followed_generation) {
             return;

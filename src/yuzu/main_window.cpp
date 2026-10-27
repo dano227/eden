@@ -2818,6 +2818,29 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
+    // Rumble requested from the Controllers tab: a short pulse on the player's controller
+    {
+        std::vector<int> rumbles;
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            rumbles.swap(state.rumble_requests);
+        }
+        for (const int player : rumbles) {
+            for (const auto& [id, slot] : pad_slots) {
+                if (slot != player || live.find(id) == live.end()) {
+                    continue;
+                }
+                const JoystickApiLock lock;
+                if (SDL_Gamepad* pad = SDL_OpenGamepad(id)) {
+                    SDL_RumbleGamepad(pad, 0xC000, 0xC000, 250);
+                    SDL_CloseGamepad(pad);
+                }
+                break;
+            }
+        }
+    }
+
     // Each live pad's player gets that pad's binding set, pointed at the pad. The slot map
     // alone is not the routing: the profile binds player N to whatever (guid, port) it was
     // mapped with, and the driver's ports follow attach order with freed ports reused - so a
@@ -2964,7 +2987,7 @@ void MainWindow::ApplyConsoleControllerMode() {
         const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
         const auto now_tick = std::chrono::steady_clock::now();
         static const QRegularExpression port_number{
-            QStringLiteral(" \\d+(?=( \\(Steam virtual\\))?$)")};
+            QStringLiteral(" \\d+(?=( \\(Steam\\))?$)")};
         QStringList lines;
         std::map<int, QColor> fills;
         std::vector<Common::ControllerConsoleState::PlayerRow> tab_rows;

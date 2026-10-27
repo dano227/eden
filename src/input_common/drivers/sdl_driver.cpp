@@ -772,7 +772,7 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
                                        sdl_guid.data[8] == 0xFF && sdl_guid.data[9] == 0x11;
             const std::string name =
                 fmt::format("{} {}{}", joystick->GetControllerName(), joystick->GetPort(),
-                            steam_virtual ? " (Steam virtual)" : "");
+                            steam_virtual ? " (Steam)" : "");
             devices.emplace_back(Common::ParamPackage{
                 {"engine", GetEngineName()},
                 {"display", std::move(name)},
