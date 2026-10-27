@@ -38,7 +38,6 @@ private:
     void OnSwapPressed(int player);
 
     QComboBox* mode = nullptr;
-    QLabel* mode_help = nullptr;
 
     QWidget* builtin_row = nullptr;
     QComboBox* builtin_picker = nullptr;

@@ -35,48 +35,36 @@ bool IsAutomatic(Settings::AppletMode mode) {
 ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
 
-    // How players are assigned. Underneath this is the controller applet's mode: the
-    // automatic modes own the players and keep the applet from opening.
-    auto* mode_box = new QGroupBox(tr("Player assignment"), this);
+    // The controller applet's mode, with the names and order it always had; the console
+    // modes own the players and keep the applet from opening
+    auto* mode_box = new QGroupBox(tr("Controller Configuration"), this);
     auto* mode_layout = new QVBoxLayout(mode_box);
-    auto* mode_row = new QHBoxLayout();
-    mode_row->addWidget(new QLabel(tr("Assign players:"), mode_box));
     mode = new QComboBox(mode_box);
-    mode->addItem(tr("Automatically, one per controller"),
-                  static_cast<int>(Settings::AppletMode::ConsoleMode));
-    mode->addItem(tr("Automatically, handheld"),
+    mode->addItem(tr("Custom frontend"), static_cast<int>(Settings::AppletMode::HLE));
+    mode->addItem(tr("Real applet"), static_cast<int>(Settings::AppletMode::LLE));
+    mode->addItem(tr("Disabled"), static_cast<int>(Settings::AppletMode::Disabled));
+    mode->addItem(tr("Console Mode"), static_cast<int>(Settings::AppletMode::ConsoleMode));
+    mode->addItem(tr("Handheld Console Mode"),
                   static_cast<int>(Settings::AppletMode::HandheldConsoleMode));
-    mode->addItem(tr("Manually, with Eden's controller window"),
-                  static_cast<int>(Settings::AppletMode::HLE));
-    mode->addItem(tr("Manually, with the console's controller window"),
-                  static_cast<int>(Settings::AppletMode::LLE));
-    mode->addItem(tr("Manually, no controller window"),
-                  static_cast<int>(Settings::AppletMode::Disabled));
-    mode_row->addWidget(mode, 1);
-    mode_layout->addLayout(mode_row);
-    mode_help = new QLabel(mode_box);
-    mode_help->setWordWrap(true);
-    mode_layout->addWidget(mode_help);
+    mode_layout->addWidget(mode);
+    layout->addWidget(mode_box);
 
-    // The handheld's own built-in controls: only meaningful for the handheld mode
-    builtin_row = new QWidget(mode_box);
+    // Handheld Console Mode: declare the handheld's own controller instead of guessing it.
+    // Shown for that mode only.
+    builtin_row = new QGroupBox(tr("Handheld Console Mode"), this);
     auto* builtin_layout = new QVBoxLayout(builtin_row);
-    builtin_layout->setContentsMargins(0, 6, 0, 0);
     auto* picker_row = new QHBoxLayout();
-    picker_row->addWidget(new QLabel(tr("Built-in controls:"), builtin_row));
+    picker_row->addWidget(new QLabel(tr("Handheld's controller:"), builtin_row));
     builtin_picker = new QComboBox(builtin_row);
-    builtin_picker->addItem(tr("Detect automatically"), QString{});
+    builtin_picker->addItem(tr("Auto-detect"), QString{});
     picker_row->addWidget(builtin_picker, 1);
-    builtin_identify = new QPushButton(tr("Identify..."), builtin_row);
-    builtin_identify->setToolTip(
-        tr("Press a button on the handheld's own controls to pick them."));
+    builtin_identify = new QPushButton(tr("Identify handheld controller..."), builtin_row);
     picker_row->addWidget(builtin_identify);
     builtin_layout->addLayout(picker_row);
     builtin_status = new QLabel(builtin_row);
     builtin_status->setWordWrap(true);
     builtin_layout->addWidget(builtin_status);
-    mode_layout->addWidget(builtin_row);
-    layout->addWidget(mode_box);
+    layout->addWidget(builtin_row);
 
     // The players right now, as the engine assigned them
     auto* now_box = new QGroupBox(tr("Players now"), this);
@@ -123,29 +111,6 @@ void ConfigurePlayerAssignment::ApplyConfiguration() {
 
 void ConfigurePlayerAssignment::UpdateModeUi() {
     const auto selected = static_cast<Settings::AppletMode>(mode->currentData().toInt());
-    switch (selected) {
-    case Settings::AppletMode::ConsoleMode:
-        mode_help->setText(tr("Like a console: each controller that connects becomes the next "
-                              "player, and keeps its player if it disconnects and returns."));
-        break;
-    case Settings::AppletMode::HandheldConsoleMode:
-        mode_help->setText(
-            tr("Like a handheld console: the built-in controls are player 1 while no other "
-               "controller is connected. Connected controllers take the players from 1."));
-        break;
-    case Settings::AppletMode::HLE:
-        mode_help->setText(tr("Players come from each player's tab. Games that ask for "
-                              "controllers open Eden's controller window."));
-        break;
-    case Settings::AppletMode::LLE:
-        mode_help->setText(tr("Players come from each player's tab. Games that ask for "
-                              "controllers open the console's own controller window."));
-        break;
-    default:
-        mode_help->setText(tr("Players come from each player's tab. Games that ask for "
-                              "controllers get the configured players without a window."));
-        break;
-    }
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }
@@ -180,7 +145,7 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
         const QString current = builtin_picker->currentData().toString();
         const bool blocked = builtin_picker->blockSignals(true);
         builtin_picker->clear();
-        builtin_picker->addItem(tr("Detect automatically"), QString{});
+        builtin_picker->addItem(tr("Auto-detect"), QString{});
         for (const auto& [display, ident] : pads) {
             builtin_picker->addItem(QString::fromStdString(display),
                                     QString::fromStdString(ident));
@@ -194,12 +159,12 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
         const auto left = std::chrono::duration_cast<std::chrono::seconds>(
                               std::chrono::seconds{15} - (std::chrono::steady_clock::now() - armed_at))
                               .count();
-        builtin_status->setText(tr("Press any button on the built-in controls (%1 s)...")
+        builtin_status->setText(tr("Waiting for a button press (%1 seconds)...")
                                     .arg(std::max<qint64>(0, left)));
-        builtin_identify->setText(tr("Waiting..."));
+        builtin_identify->setText(tr("Press a button on the handheld's pad..."));
         return;
     }
-    builtin_identify->setText(tr("Identify..."));
+    builtin_identify->setText(tr("Identify handheld controller..."));
 
     // What is stored for the way Eden was launched: the Steam handle under Steam, the raw
     // pad's identity otherwise (each launch kind keeps its own)
@@ -222,15 +187,20 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
         builtin_picker->blockSignals(blocked);
     }
 
-    if (!detected_name.empty()) {
-        builtin_status->setText(tr("Using %1. It is player 1 only while no other controller "
-                                   "is connected.")
-                                    .arg(QString::fromStdString(detected_name)));
-    } else if (!stored.isEmpty()) {
-        builtin_status->setText(tr("The built-in controls are not connected right now."));
+    if (stored.isEmpty() && detected_name.empty()) {
+        builtin_status->setText(
+            tr("Not set. Pick the handheld's controller above, or use Identify."));
     } else {
-        builtin_status->setText(tr("Not detected yet: connect only the built-in controls, or "
-                                   "use Identify."));
+        const QString name = stored_index > 0 ? builtin_picker->itemText(stored_index)
+                             : !detected_name.empty() ? QString::fromStdString(detected_name)
+                                                      : tr("not set");
+        builtin_status->setText(
+            tr("Handheld: %1 (%2). %3")
+                .arg(name)
+                .arg(want_index > 0 ? tr("declared") : tr("auto-detected"))
+                .arg(!detected_name.empty()
+                         ? tr("Takes no player while external controllers are connected.")
+                         : tr("Not currently connected.")));
     }
 }
 
