@@ -2254,6 +2254,29 @@ void MainWindow::ApplyConsoleControllerMode() {
             const u32 id = ids[i];
             present.insert(id);
             first_seen.try_emplace(id, now);
+            if (LaunchedThroughSteam() && !IsSteamVirtualPad(id)) {
+                // PROBE: a real device next to Steam's virtual pads (unhidden for its motion):
+                // never a player; log it once, with the virtual pads of the same model
+                static std::set<u32> probed;
+                if (probed.insert(id).second) {
+                    std::string twins;
+                    const Uint16 vendor = SDL_GetJoystickVendorForID(id);
+                    const Uint16 product = SDL_GetJoystickProductForID(id);
+                    for (int k = 0; k < count; ++k) {
+                        if (ids[k] != id && IsSteamVirtualPad(ids[k]) &&
+                            SDL_GetJoystickVendorForID(ids[k]) == vendor &&
+                            SDL_GetJoystickProductForID(ids[k]) == product) {
+                            twins += fmt::format("{} ", ids[k]);
+                        }
+                    }
+                    LOG_INFO(Frontend,
+                             "console-mode: PROBE real device inst={} {:04x}:{:04x} name={} "
+                             "gyro={} path={} pairs with virtual inst=[{}]",
+                             id, vendor, product, PadName(id).toStdString(), PadHasGyro(id),
+                             PadPath(id).toStdString(), twins);
+                }
+                continue;
+            }
             std::string ident = PadIdentity(id);
             if (LaunchedThroughSteam()) {
                 if (const Uint64 handle = PadSteamHandle(id)) {
