@@ -1489,6 +1489,8 @@ void MainWindow::ConnectWidgetEvents() {
     connect(this, &MainWindow::EmulationStopping, this, &MainWindow::SoftwareKeyboardExit);
     connect(this, &MainWindow::EmulationStarting, this, &MainWindow::RefreshRuntimeCheats);
     connect(&console_mode_timer, &QTimer::timeout, this, &MainWindow::ApplyConsoleControllerMode);
+    connect(&console_activity_timer, &QTimer::timeout, this, &MainWindow::PollControllerActivity);
+    console_activity_timer.start(std::chrono::milliseconds{40});
     // 250ms: effectively instant to the user, negligible cost (the input reload only
     // runs when the membership changes).
     console_mode_timer.start(std::chrono::milliseconds{250});
@@ -2067,6 +2069,108 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
     }
 }
 
+void MainWindow::RenderControllerOverlay() {
+    // A row lights blue while its controller has an input held, or for a moment after a tap
+    // (so a tap between two polls still shows). Motion never lights it: a resting gyro reports
+    // constant noise.
+    const auto now = std::chrono::steady_clock::now();
+    std::set<u32> active;
+    for (const auto& row : overlay_rows) {
+        if (row.pad == 0) {
+            continue;
+        }
+        const auto last =
+            input_subsystem ? input_subsystem->GetSDLLastActivity(row.pad) : std::nullopt;
+        if (PadInputHeld(row.pad) || (last && now - *last < std::chrono::milliseconds{250})) {
+            active.insert(row.pad);
+        }
+    }
+    overlay_active_pads = active;
+    {
+        auto& state = Common::GetControllerConsoleState();
+        std::scoped_lock lock{state.mutex};
+        for (auto& player : state.players) {
+            const auto row = std::find_if(overlay_rows.begin(), overlay_rows.end(),
+                                          [&](const auto& r) { return r.player == player.player; });
+            player.active = row != overlay_rows.end() && active.contains(row->pad);
+        }
+    }
+
+    const auto mode = Settings::values.controller_applet_mode.GetValue();
+    const bool automatic = mode == Settings::AppletMode::ConsoleMode ||
+                           mode == Settings::AppletMode::HandheldConsoleMode;
+    auto& overlay = Common::GetControllerOverlayFrame();
+    if (!Settings::values.console_debug_overlay.GetValue() || !automatic ||
+        overlay_rows.empty()) {
+        std::scoped_lock lock{overlay.mutex};
+        if (overlay.enabled) {
+            overlay.enabled = false;
+            ++overlay.version;
+        }
+        return;
+    }
+    QFont font{QStringLiteral("monospace")};
+    font.setPointSize(9);
+    const QFontMetrics fm{font};
+    int width = 12;
+    for (const auto& row : overlay_rows) {
+        width = std::max(width, fm.horizontalAdvance(row.text) + 12);
+    }
+    const int height = 12 + fm.lineSpacing() * static_cast<int>(overlay_rows.size());
+    QImage image{width, height, QImage::Format_RGBA8888};
+    image.fill(QColor(0, 0, 0, 140));
+    QPainter painter{&image};
+    painter.setFont(font);
+    painter.setPen(Qt::white);
+    int y = 6 + fm.ascent();
+    for (const auto& row : overlay_rows) {
+        std::optional<QColor> fill;
+        if (row.flash == 2) {
+            fill = QColor(210, 60, 60, 190);
+        } else if (active.contains(row.pad)) {
+            fill = QColor(60, 120, 230, 190);
+        } else if (row.flash == 1) {
+            fill = QColor(60, 180, 90, 190);
+        }
+        if (fill) {
+            painter.fillRect(2, y - fm.ascent() - 1, width - 4, fm.lineSpacing(), *fill);
+        }
+        painter.drawText(6, y, row.text);
+        y += fm.lineSpacing();
+    }
+    painter.end();
+
+    std::scoped_lock lock{overlay.mutex};
+    overlay.width = static_cast<u32>(width);
+    overlay.height = static_cast<u32>(height);
+    overlay.pixels.resize(image.sizeInBytes());
+    std::memcpy(overlay.pixels.data(), image.constBits(), image.sizeInBytes());
+    overlay.enabled = true;
+    ++overlay.version;
+}
+
+void MainWindow::PollControllerActivity() {
+    // Input shows faster than the 250ms assignment tick: redraw only when who is active changes
+    if (overlay_rows.empty()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    std::set<u32> active;
+    for (const auto& row : overlay_rows) {
+        if (row.pad == 0) {
+            continue;
+        }
+        const auto last =
+            input_subsystem ? input_subsystem->GetSDLLastActivity(row.pad) : std::nullopt;
+        if (PadInputHeld(row.pad) || (last && now - *last < std::chrono::milliseconds{250})) {
+            active.insert(row.pad);
+        }
+    }
+    if (active != overlay_active_pads) {
+        RenderControllerOverlay();
+    }
+}
+
 void MainWindow::ApplyConsoleControllerMode() {
     const auto mode = Settings::values.controller_applet_mode.GetValue();
     const bool handheld = mode == Settings::AppletMode::HandheldConsoleMode;
@@ -2257,6 +2361,10 @@ void MainWindow::ApplyConsoleControllerMode() {
     }
 
     if (!handheld && !console) {
+        if (!overlay_rows.empty()) {
+            overlay_rows.clear();
+            RenderControllerOverlay();
+        }
         {
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
@@ -2987,17 +3095,14 @@ void MainWindow::ApplyConsoleControllerMode() {
     // so the text is drawn here and alpha-blended into the frame before the GPU copy.
     {
         // One row per player: it pops in green when its pad connects, turns red when the
-        // pad leaves and then goes, and lights blue while that pad has an input held (or for
-        // one refresh after a tap shorter than the 250ms tick). Motion never lights it: a
-        // resting gyro reports constant noise. The name drops InputCommon's port number,
-        // which shifts whenever Steam moves a controller to another virtual pad.
+        // pad leaves and then goes. Blue (input held) is RenderControllerOverlay's, which also
+        // runs on the fast activity timer. The name drops InputCommon's port number, which
+        // shifts whenever Steam moves a controller to another virtual pad.
         constexpr qint64 flash_ms = 1500;
         const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
-        const auto now_tick = std::chrono::steady_clock::now();
         static const QRegularExpression port_number{
             QStringLiteral(" \\d+(?=( \\(Steam\\))?$)")};
-        QStringList lines;
-        std::map<int, QColor> fills;
+        overlay_rows.clear();
         std::vector<Common::ControllerConsoleState::PlayerRow> tab_rows;
         for (int i = 0; i < static_cast<int>(players.size()); ++i) {
             u32 pad = 0;
@@ -3029,25 +3134,14 @@ void MainWindow::ApplyConsoleControllerMode() {
                 gone = 0;
                 continue;
             }
-            const int row = static_cast<int>(lines.size());
-            lines.append(QStringLiteral("P%1: %2").arg(i + 1).arg(overlay_row_name[i]));
-            if (gone != 0) {
-                fills[row] = QColor(210, 60, 60, 190);
-                continue;
-            }
-            const auto last =
-                input_subsystem ? input_subsystem->GetSDLLastActivity(pad) : std::nullopt;
-            const bool tapped = last && overlay_last_tick != std::chrono::steady_clock::time_point{} &&
-                                *last > overlay_last_tick;
-            const bool active = PadInputHeld(pad) || tapped;
-            tab_rows.push_back({i, overlay_row_name[i].toStdString(), active});
-            if (active) {
-                fills[row] = QColor(60, 120, 230, 190);
-            } else if (now_ms - since < flash_ms) {
-                fills[row] = QColor(60, 180, 90, 190);
+            const int flash = gone != 0 ? 2 : (now_ms - since < flash_ms ? 1 : 0);
+            overlay_rows.push_back({i, QStringLiteral("P%1: %2").arg(i + 1).arg(
+                                           overlay_row_name[i]),
+                                    gone != 0 ? 0u : pad, flash});
+            if (gone == 0) {
+                tab_rows.push_back({i, overlay_row_name[i].toStdString(), false});
             }
         }
-        overlay_last_tick = now_tick;
         {
             std::string handheld_name;
             bool handheld_has_player = false;
@@ -3065,54 +3159,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             state.handheld_name = std::move(handheld_name);
             state.handheld_has_player = handheld_has_player;
         }
-
-        auto& overlay = Common::GetControllerOverlayFrame();
-        static bool overlay_push_logged = false;
-        if (!overlay_push_logged) {
-            overlay_push_logged = true;
-            LOG_INFO(Frontend,
-                     "overlay: first push setting={} mode={} lines={}",
-                     Settings::values.console_debug_overlay.GetValue(),
-                     static_cast<int>(mode), static_cast<int>(lines.size()));
-        }
-        if (!Settings::values.console_debug_overlay.GetValue() || (!handheld && !console) ||
-            lines.isEmpty()) {
-            std::scoped_lock lock{overlay.mutex};
-            overlay.enabled = false;
-            ++overlay.version;
-        } else {
-            QFont font{QStringLiteral("monospace")};
-            font.setPointSize(9);
-            const QFontMetrics fm{font};
-            int width = 12;
-            for (const QString& line : lines) {
-                width = std::max(width, fm.horizontalAdvance(line) + 12);
-            }
-            const int height = 12 + fm.lineSpacing() * static_cast<int>(lines.size());
-            QImage image{width, height, QImage::Format_RGBA8888};
-            image.fill(QColor(0, 0, 0, 140));
-            QPainter painter{&image};
-            painter.setFont(font);
-            painter.setPen(Qt::white);
-            int y = 6 + fm.ascent();
-            for (int n = 0; n < static_cast<int>(lines.size()); ++n) {
-                if (const auto fill = fills.find(n); fill != fills.end()) {
-                    painter.fillRect(2, y - fm.ascent() - 1, width - 4, fm.lineSpacing(),
-                                     fill->second);
-                }
-                painter.drawText(6, y, lines[n]);
-                y += fm.lineSpacing();
-            }
-            painter.end();
-
-            std::scoped_lock lock{overlay.mutex};
-            overlay.width = static_cast<u32>(width);
-            overlay.height = static_cast<u32>(height);
-            overlay.pixels.resize(image.sizeInBytes());
-            std::memcpy(overlay.pixels.data(), image.constBits(), image.sizeInBytes());
-            overlay.enabled = true;
-            ++overlay.version;
-        }
+        RenderControllerOverlay();
     }
 
     if (!changed) {

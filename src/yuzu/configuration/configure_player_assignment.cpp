@@ -207,7 +207,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
 
     timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &ConfigurePlayerAssignment::Refresh);
-    timer->start(250);
+    // Fast enough for the highlight to follow a button press
+    timer->start(50);
 
     LoadConfiguration();
     Refresh();

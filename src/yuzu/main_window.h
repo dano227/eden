@@ -593,7 +593,19 @@ private:
     std::array<qint64, 10> overlay_row_since{};
     std::array<qint64, 10> overlay_row_gone{};
     std::array<QString, 10> overlay_row_name{};
-    std::chrono::steady_clock::time_point overlay_last_tick{};
+    /// The overlay's rows as the last assignment tick left them: flash 1 green, 2 red
+    struct OverlayRow {
+        int player;
+        QString text;
+        u32 pad;
+        int flash;
+    };
+    std::vector<OverlayRow> overlay_rows;
+    std::set<u32> overlay_active_pads;
+    /// Polls controller input faster than the assignment tick, for the blue highlight
+    QTimer console_activity_timer;
+    void RenderControllerOverlay();
+    void PollControllerActivity();
     /// The user's own players (bindings, types, connected flags) while a console mode drives
     /// them: the binding sets each pad carries come from here, the config file only ever
     /// sees this, and leaving the mode puts it back
