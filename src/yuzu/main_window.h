@@ -593,6 +593,14 @@ private:
     std::array<qint64, 10> overlay_row_since{};
     std::array<qint64, 10> overlay_row_gone{};
     std::array<QString, 10> overlay_row_name{};
+    /// Per player: the controller behind the row (its identity, which survives Steam moving it
+    /// to another virtual pad), and its flash (1 green, 2 red) with when it began; a
+    /// red one followed by a green one (the controller left and another took its place) holds
+    /// the green's start in overlay_green_at
+    std::array<std::string, 10> overlay_row_ident{};
+    std::array<int, 10> overlay_flash{};
+    std::array<qint64, 10> overlay_flash_since{};
+    std::array<qint64, 10> overlay_green_at{};
     /// The overlay's rows as the last assignment tick left them: flash 1 green, 2 red
     struct OverlayRow {
         int player;

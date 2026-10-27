@@ -2140,7 +2140,7 @@ void MainWindow::RenderControllerOverlay() {
             if (blink) {
                 fill = QColor(210, 60, 60, 190);
             }
-        } else if (active.contains(row.pad)) {
+        } else if (row.pad != 0 && active.contains(row.pad)) {
             fill = QColor(60, 120, 230, 190);
         } else if (blink) {
             fill = QColor(60, 180, 90, 190);
@@ -3123,6 +3123,9 @@ void MainWindow::ApplyConsoleControllerMode() {
             QStringLiteral(" \\d+(?=( \\(Steam\\))?$)")};
         overlay_rows.clear();
         std::vector<Common::ControllerConsoleState::PlayerRow> tab_rows;
+        // Flashes follow the controller behind a player, not just the player: in handheld mode
+        // P1 stays connected while the controller behind it changes. Green when a controller
+        // takes a player; red when one leaves, then green if another takes its place at once.
         for (int i = 0; i < static_cast<int>(players.size()); ++i) {
             u32 pad = 0;
             for (const auto& [id, slot] : pad_slots) {
@@ -3133,6 +3136,9 @@ void MainWindow::ApplyConsoleControllerMode() {
             }
             auto& since = overlay_row_since[i];
             auto& gone = overlay_row_gone[i];
+            auto& flash = overlay_flash[i];
+            auto& flash_since = overlay_flash_since[i];
+            auto& green_at = overlay_green_at[i];
             if (players[i].connected && pad) {
                 const auto [display, raw] = label_of(pad, std::string{});
                 QString name = display.isEmpty() ? raw : display;
@@ -3141,9 +3147,30 @@ void MainWindow::ApplyConsoleControllerMode() {
                 if (since == 0 || gone != 0) {
                     since = now_ms;
                     gone = 0;
+                    flash = 1;
+                    flash_since = now_ms;
+                    green_at = 0;
+                } else if (live[pad] != overlay_row_ident[i]) {
+                    const bool old_left =
+                        std::none_of(live.begin(), live.end(), [&](const auto& entry) {
+                            return entry.second == overlay_row_ident[i];
+                        });
+                    if (old_left) {
+                        flash = 2;
+                        flash_since = now_ms;
+                        green_at = now_ms + flash_ms / 2;
+                    } else {
+                        flash = 1;
+                        flash_since = now_ms;
+                        green_at = 0;
+                    }
                 }
+                overlay_row_ident[i] = live[pad];
             } else if (since != 0 && gone == 0) {
                 gone = now_ms;
+                flash = 2;
+                flash_since = now_ms;
+                green_at = 0;
             }
             if (since == 0) {
                 continue;
@@ -3151,15 +3178,23 @@ void MainWindow::ApplyConsoleControllerMode() {
             if (gone != 0 && now_ms - gone > flash_ms) {
                 since = 0;
                 gone = 0;
+                flash = 0;
+                overlay_row_ident[i].clear();
                 continue;
             }
-            const int flash = gone != 0 ? 2 : (now_ms - since < flash_ms ? 1 : 0);
+            if (green_at != 0 && now_ms >= green_at) {
+                flash = 1;
+                flash_since = green_at;
+                green_at = 0;
+            }
+            if (flash != 0 && gone == 0 && green_at == 0 && now_ms - flash_since >= flash_ms) {
+                flash = 0;
+            }
             overlay_rows.push_back({i, QStringLiteral("P%1: %2").arg(i + 1).arg(
                                            overlay_row_name[i]),
-                                    gone != 0 ? 0u : pad, flash, gone != 0 ? gone : since});
-            if (gone == 0) {
-                tab_rows.push_back({i, overlay_row_name[i].toStdString(), false});
-            }
+                                    gone != 0 ? 0u : pad, flash, flash_since});
+            tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
+                                flash_since});
         }
         {
             std::string handheld_name;

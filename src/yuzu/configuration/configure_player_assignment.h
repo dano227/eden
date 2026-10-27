@@ -75,16 +75,8 @@ private:
     /// The rows and the player each shows, for restyling them while a controller is active
     std::vector<QFrame*> player_rows;
     std::vector<int> row_players;
-    /// The rows listed: since when (green for a moment), and since when gone (red, then dropped)
-    struct ShownRow {
-        std::string name;
-        long long since = 0;
-        long long gone = 0;
-    };
-    std::map<int, ShownRow> shown_rows;
     /// When each player's row was clicked to rumble (blue for a moment)
     std::map<int, long long> rumbled_at;
-    bool rows_seeded = false;
     std::function<void(int)> open_player_tab;
 
     QTimer* timer = nullptr;

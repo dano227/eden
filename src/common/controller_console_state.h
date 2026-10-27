@@ -27,7 +27,10 @@ struct ControllerConsoleState {
     struct PlayerRow {
         int player; ///< 0-based player index
         std::string name;
-        bool active; ///< the pad has an input held (or was tapped since the last tick)
+        bool active;  ///< the pad has an input held (or was just tapped)
+        bool leaving; ///< the controller left and nothing took its place: shown red, then gone
+        int flash;    ///< 0 none, 1 green (a controller took the player), 2 red (one left)
+        long long flash_since; ///< ms since epoch; the flash blinks for 1.5 seconds from here
     };
     /// True while an automatic assignment mode runs (the engine owns the players)
     bool engine_active = false;

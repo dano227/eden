@@ -423,46 +423,23 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     const bool in_effect = selected == Settings::values.controller_applet_mode.GetValue();
 
-    // Like the overlay: a player's row pops in green when its controller connects, and turns
-    // red when the controller leaves before it is dropped
+    // The engine decides the flashes (the overlay shows the same): green when a controller
+    // takes a player, red when one leaves; a leaving row stays red until it is dropped
     constexpr qint64 flash_ms = 1500;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    int last_player = -1;
     for (const auto& entry : players) {
-        auto& shown = shown_rows[entry.player];
-        if (shown.since == 0 || shown.gone != 0) {
-            // The players already there when the tab opens are not new
-            shown.since = rows_seeded ? now : now - flash_ms;
-            shown.gone = 0;
-        }
-        shown.name = entry.name;
-    }
-    rows_seeded = rows_seeded || engine_active;
-    for (auto it = shown_rows.begin(); it != shown_rows.end();) {
-        const bool present = std::any_of(players.begin(), players.end(), [&](const auto& entry) {
-            return entry.player == it->first;
-        });
-        if (!present && it->second.gone == 0) {
-            it->second.gone = now;
-        }
-        if (it->second.gone != 0 && now - it->second.gone > flash_ms) {
-            it = shown_rows.erase(it);
-        } else {
-            ++it;
+        if (!entry.leaving) {
+            last_player = std::max(last_player, entry.player);
         }
     }
-    const int last_player = players.empty() ? -1 : std::max_element(players.begin(),
-                                                                  players.end(),
-                                                                  [](const auto& a,
-                                                                     const auto& b) {
-                                                                      return a.player < b.player;
-                                                                  })->player;
 
     // Rebuild the rows when they change; the colours only restyle them
     QString signature = QString::number(swap_from) + QLatin1Char(';');
-    for (const auto& [player, shown] : shown_rows) {
-        signature += QString::number(player) + QLatin1Char(':') +
-                     QString::fromStdString(shown.name) + (shown.gone ? QStringLiteral("x") : QString{}) +
-                     QLatin1Char('|');
+    for (const auto& entry : players) {
+        signature += QString::number(entry.player) + QLatin1Char(':') +
+                     QString::fromStdString(entry.name) +
+                     (entry.leaving ? QStringLiteral("x") : QString{}) + QLatin1Char('|');
     }
     if (!handheld_has_player) {
         signature += QStringLiteral("h:") + QString::fromStdString(handheld_name);
@@ -476,7 +453,8 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         }
         player_rows.clear();
         row_players.clear();
-        for (const auto& [player, entry] : shown_rows) {
+        for (const auto& entry : players) {
+            const int player = entry.player;
             auto* row = new PlayerRow(player, players_box);
             row->setToolTip(tr("Click to rumble this controller. Hold, then drop on another "
                                "player to swap them."));
@@ -489,7 +467,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->addWidget(grip);
             line->addWidget(new QLabel(QStringLiteral("P%1").arg(player + 1), row));
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
-            const bool live = entry.gone == 0;
+            const bool live = !entry.leaving;
 
             auto* up = new QPushButton(QStringLiteral("\u25B2"), row);
             up->setToolTip(tr("Swap with P%1").arg(player));
@@ -566,23 +544,23 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     };
     for (size_t k = 0; k < player_rows.size(); ++k) {
         const int player = row_players[k];
-        const auto shown = shown_rows.find(player);
-        if (player < 0 || shown == shown_rows.end()) {
-            continue;
-        }
         const auto entry = std::find_if(players.begin(), players.end(),
                                         [&](const auto& row) { return row.player == player; });
+        if (player < 0 || entry == players.end()) {
+            continue;
+        }
         const auto rumbled = rumbled_at.find(player);
-        const bool active = (entry != players.end() && entry->active) ||
+        const bool active = entry->active ||
                             (rumbled != rumbled_at.end() && now - rumbled->second < 500);
+        const bool blink = entry->flash != 0 && blink_on(entry->flash_since);
         QString style = card;
-        if (shown->second.gone != 0) {
-            if (blink_on(shown->second.gone)) {
+        if (entry->flash == 2) {
+            if (blink) {
                 style = fill("210, 60, 60, 190");
             }
-        } else if (active) {
+        } else if (active && !entry->leaving) {
             style = fill("60, 120, 230, 190");
-        } else if (blink_on(shown->second.since)) {
+        } else if (blink) {
             style = fill("60, 180, 90, 190");
         }
         if (player_rows[k]->styleSheet() != style) {
@@ -592,7 +570,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
 
     if (!in_effect || (IsAutomatic(selected) && !engine_active)) {
         players_note->setText(tr("Switching..."));
-    } else if (players.empty()) {
+    } else if (last_player < 0) {
         players_note->setText(tr("No controller is a player right now."));
     } else {
         players_note->setText(tr("Press a button on a controller to see its player. Swaps last "

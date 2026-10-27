@@ -201,16 +201,14 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     follow_timer = new QTimer(this);
     connect(follow_timer, &QTimer::timeout, this, [this] {
         unsigned long long generation = 0;
-        std::vector<int> active_players;
+        std::vector<Common::ControllerConsoleState::PlayerRow> rows;
         bool engine_active = false;
         {
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
             generation = state.generation;
             engine_active = state.engine_active;
-            for (const auto& row : state.players) {
-                active_players.push_back(row.player);
-            }
+            rows = state.players;
         }
         // Automatic assignment owns the players: only their tabs show, and their connection
         // cannot be toggled by hand
@@ -222,8 +220,8 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
              parent = parent->parentWidget()) {
             tabs = qobject_cast<QTabWidget*>(parent);
         }
-        // A tab that appears flashes its label green; one whose controller left turns red for a
-        // moment before it hides
+        // The tabs follow the engine's rows and flashes, like the overlay: a green label when a
+        // controller takes the player, red when one leaves (the tab hides once its row is gone)
         constexpr long long flash_ms = 1500;
         const long long now = QDateTime::currentMSecsSinceEpoch();
         // The player tabs' choice can be locked (player 1 set to Handheld) without toggling
@@ -231,35 +229,18 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             mirror_console_mode();
         }
         for (std::size_t i = 0; i < player_tabs.size(); ++i) {
-            const bool assigned =
-                engine_active && std::find(active_players.begin(), active_players.end(),
-                                           static_cast<int>(i)) != active_players.end();
+            const auto row = std::find_if(rows.begin(), rows.end(), [i](const auto& r) {
+                return r.player == static_cast<int>(i);
+            });
             bool shown = true;
             QColor label;
-            if (!automatic) {
-                tab_since[i] = 0;
-                tab_gone[i] = 0;
-            } else if (assigned) {
-                if (tab_since[i] == 0 || tab_gone[i] != 0) {
-                    tab_since[i] = tabs_seeded ? now : now - flash_ms;
-                    tab_gone[i] = 0;
-                }
-                const long long elapsed = now - tab_since[i];
-                if (elapsed < flash_ms && (elapsed / 125) % 2 == 0) {
-                    label = QColor(40, 160, 70);
-                }
-            } else {
-                if (tab_since[i] != 0 && tab_gone[i] == 0) {
-                    tab_gone[i] = now;
-                }
-                if (tab_gone[i] != 0 && now - tab_gone[i] < flash_ms) {
-                    if (((now - tab_gone[i]) / 125) % 2 == 0) {
-                        label = QColor(200, 50, 50);
+            if (automatic) {
+                shown = engine_active && row != rows.end();
+                if (shown && row->flash != 0) {
+                    const long long elapsed = now - row->flash_since;
+                    if (elapsed < flash_ms && (elapsed / 125) % 2 == 0) {
+                        label = row->flash == 2 ? QColor(200, 50, 50) : QColor(40, 160, 70);
                     }
-                } else {
-                    shown = false;
-                    tab_since[i] = 0;
-                    tab_gone[i] = 0;
                 }
             }
             if (tabs) {
@@ -270,7 +251,8 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             }
             player_controllers[i]->SetConnectionLocked(automatic);
         }
-        tabs_seeded = true;
+        // The Controllers tab carries Console Mode in the automatic modes
+        ui->handheldGroup->setVisible(!automatic);
         ui->connectedControllers->setVisible(!automatic);
 
         if (generation == followed_generation) {
