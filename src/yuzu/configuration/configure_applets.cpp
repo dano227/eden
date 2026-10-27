@@ -160,16 +160,34 @@ void ConfigureApplets::RefreshBuiltinPicker() {
         }
     }
 
-    const QString stored = QString::fromStdString(Settings::values.builtin_pad_identity.GetValue());
+    // The pad the engine holds as the handheld's own, in the picker's terms: under Steam the
+    // entries are Steam handles (every pad shares the GUID there), so the stored handle is
+    // what names it; a pick the engine has not taken in yet is already a handle entry
+    const QString identity =
+        QString::fromStdString(Settings::values.builtin_pad_identity.GetValue());
+    const QString handle =
+        QString::fromStdString(Settings::values.builtin_pad_steam_handle.GetValue());
+    const QString stored = identity.startsWith(QStringLiteral("steamhandle:")) || handle.isEmpty()
+                               ? identity
+                               : QStringLiteral("steamhandle:") + handle;
     const bool manual = Settings::values.builtin_pad_manual.GetValue();
     QString name = tr("not set");
     bool present = false;
-    for (const auto& [display, ident] : pads) {
-        if (QString::fromStdString(ident) == stored) {
-            name = QString::fromStdString(display);
+    int stored_index = -1;
+    for (int i = 1; i < builtin_picker->count(); ++i) {
+        if (builtin_picker->itemData(i).toString() == stored) {
+            stored_index = i;
+            name = builtin_picker->itemText(i);
             present = true;
             break;
         }
+    }
+    // Keep the picker on what the engine holds: a declared pad, or Auto-detect
+    const int want_index = manual ? stored_index : 0;
+    if (want_index >= 0 && builtin_picker->currentIndex() != want_index) {
+        const bool blocked = builtin_picker->blockSignals(true);
+        builtin_picker->setCurrentIndex(want_index);
+        builtin_picker->blockSignals(blocked);
     }
     if (stored.isEmpty()) {
         builtin_status->setText(
