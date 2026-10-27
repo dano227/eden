@@ -458,6 +458,21 @@ std::optional<std::pair<std::string, int>> SDLDriver::GetBindingForSDLID(SDL_Joy
     return std::pair{joystick->GetGUID().RawString(), joystick->GetPort()};
 }
 
+void SDLDriver::MarkActivity(SDL_JoystickID sdl_id) {
+    std::scoped_lock lock{activity_mutex};
+    last_activity[sdl_id] = std::chrono::steady_clock::now();
+}
+
+std::optional<std::chrono::steady_clock::time_point> SDLDriver::GetLastActivity(
+    SDL_JoystickID sdl_id) const {
+    std::scoped_lock lock{activity_mutex};
+    const auto it = last_activity.find(sdl_id);
+    if (it == last_activity.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
 std::shared_ptr<SDLJoystick> SDLDriver::GetSDLJoystickByGamepadID(SDL_JoystickID sdl_id) {
     auto* const sdl_gamepad = SDL_GetGamepadFromID(sdl_id);
     if (sdl_gamepad == nullptr) {
@@ -596,6 +611,7 @@ void SDLDriver::HandleGameControllerEvent(const SDL_Event& event) {
         break;
     }
     case SDL_EVENT_JOYSTICK_BUTTON_DOWN: {
+        MarkActivity(event.jbutton.which);
         if (const auto joystick = GetSDLJoystickBySDLID(event.jbutton.which)) {
             const PadIdentifier identifier = joystick->GetPadIdentifier();
             SetButton(identifier, event.jbutton.button, true);
@@ -603,6 +619,9 @@ void SDLDriver::HandleGameControllerEvent(const SDL_Event& event) {
         break;
     }
     case SDL_EVENT_JOYSTICK_HAT_MOTION: {
+        if (event.jhat.value != SDL_HAT_CENTERED) {
+            MarkActivity(event.jhat.which);
+        }
         if (const auto joystick = GetSDLJoystickBySDLID(event.jhat.which)) {
             const PadIdentifier identifier = joystick->GetPadIdentifier();
             SetHatButton(identifier, event.jhat.hat, event.jhat.value);
@@ -610,6 +629,10 @@ void SDLDriver::HandleGameControllerEvent(const SDL_Event& event) {
         break;
     }
     case SDL_EVENT_JOYSTICK_AXIS_MOTION: {
+        // Half travel: a deliberate push, never resting drift
+        if (event.jaxis.value > 16384 || event.jaxis.value < -16384) {
+            MarkActivity(event.jaxis.which);
+        }
         if (const auto joystick = GetSDLJoystickBySDLID(event.jaxis.which)) {
             const PadIdentifier identifier = joystick->GetPadIdentifier();
             SetAxis(identifier, event.jaxis.axis, event.jaxis.value / 32767.0f);

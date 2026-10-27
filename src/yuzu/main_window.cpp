@@ -1979,34 +1979,27 @@ void MainWindow::ApplyConsoleControllerMode() {
         builtin_identity = Settings::values.builtin_pad_identity.GetValue();
     }
 
-    // The settings-tab names (InputCommon's display names) matched by identity, kept per
-    // identity so a departed pad can still be named in its Disconnected event.
-    std::map<std::string, std::vector<std::pair<int, QString>>> display_names;
+    // The settings-tab names: the Controls tab lists InputCommon's devices by (guid, port),
+    // so the name is the one of the device this pad is bound as - the same text the user
+    // picks in that tab, not a guess by connect order. Kept per identity so a departed
+    // pad can still be named in its Disconnected event.
+    std::vector<Common::ParamPackage> input_devices;
     if (input_subsystem) {
-        for (const auto& device : input_subsystem->GetInputDevices()) {
-            display_names[StableGuidHex("guid:" + device.Get("guid", ""))].emplace_back(
-                device.Get("port", 0), QString::fromStdString(device.Get("display", "")));
-        }
-        for (auto& [key, list] : display_names) {
-            std::sort(list.begin(), list.end());
-        }
+        input_devices = input_subsystem->GetInputDevices();
     }
-    // Identical pads share one GUID now, so the settings-style name ("Xbox One
-    // Controller 0") is picked by connect order within the GUID group - the same order
-    // InputCommon numbers its ports in.
-    const auto label_of = [&](u32 id, const std::string& ident) {
+    const auto label_of = [&](u32 id, const std::string&) {
         QString display;
-        const std::string key = StableGuidHex(ident);
-        const auto it = display_names.find(key);
-        if (it != display_names.end() && !it->second.empty()) {
-            size_t rank = 0;
-            for (const auto& [oid, oident] : live) {
-                if (oid < id && StableGuidHex(oident) == key) {
-                    ++rank;
+        if (input_subsystem) {
+            if (const auto binding = input_subsystem->GetSDLBinding(id)) {
+                for (const auto& device : input_devices) {
+                    if (device.Get("engine", "") == "sdl" &&
+                        device.Get("guid", "") == binding->first &&
+                        device.Get("port", -1) == binding->second) {
+                        display = QString::fromStdString(device.Get("display", ""));
+                        break;
+                    }
                 }
             }
-            const auto& list = it->second;
-            display = list[std::min(rank, list.size() - 1)].second;
         }
         return std::pair<QString, QString>{display, PadName(id)};
     };
@@ -2478,10 +2471,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                     const auto it = pad_slots.find(id);
                     if (it != pad_slots.end()) {
                         const auto [display, raw] = label_of(id, ident);
-                        PushConsoleEvent(QStringLiteral("P%1 Connected : %2 : %3")
+                        PushConsoleEvent(QStringLiteral("P%1 Connected : %2")
                                              .arg(it->second + 1)
-                                             .arg(display)
-                                             .arg(raw));
+                                             .arg(display.isEmpty() ? raw : display));
                         break;
                     }
                 }
@@ -2492,10 +2484,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                         const auto pit = pad_identity.find(pid);
                         if (pit != pad_identity.end() && pit->second == ident) {
                             const auto [display, raw] = names_of(ident);
-                            PushConsoleEvent(QStringLiteral("P%1 Disconnected : %2 : %3")
+                            PushConsoleEvent(QStringLiteral("P%1 Disconnected : %2")
                                                  .arg(slot + 1)
-                                                 .arg(display)
-                                                 .arg(raw));
+                                                 .arg(display.isEmpty() ? raw : display));
                             break;
                         }
                     }
@@ -2564,27 +2555,32 @@ void MainWindow::ApplyConsoleControllerMode() {
     // so the text is drawn here and alpha-blended into the frame before the GPU copy.
     {
         QStringList lines;
+        std::set<int> lit_lines;
         lines.append(QStringLiteral("Controller:"));
         for (int i = 0; i < static_cast<int>(players.size()); ++i) {
             if (!players[i].connected) {
                 continue;
             }
-            QString display = QStringLiteral("?");
-            QString raw = QStringLiteral("?");
+            QString name = QStringLiteral("?");
+            bool active = false;
             for (const auto& [id, slot] : pad_slots) {
                 if (slot == i && live.find(id) != live.end()) {
-                    const auto [d, r] = label_of(id, pad_identity[id]);
-                    display = d;
-                    raw = r;
+                    const auto [display, raw] = label_of(id, pad_identity[id]);
+                    name = display.isEmpty() ? raw : display;
+                    // Lit for a moment after a deliberate input on that pad (buttons, d-pad,
+                    // a stick or trigger pushed past half). Motion never lights it: a resting
+                    // gyro reports constant noise and would keep the player lit.
+                    const auto last = input_subsystem ? input_subsystem->GetSDLLastActivity(id)
+                                                      : std::nullopt;
+                    active = last && std::chrono::steady_clock::now() - *last <
+                                         std::chrono::milliseconds{600};
                     break;
                 }
             }
-            const QString primary = display.isEmpty() ? raw : display;
-            lines.append(QStringLiteral("P%1: %2%3")
-                             .arg(i + 1)
-                             .arg(primary)
-                             .arg(display.isEmpty() ? QStringLiteral(" (?)")
-                                                    : QStringLiteral(" (%1)").arg(raw)));
+            if (active) {
+                lit_lines.insert(static_cast<int>(lines.size()));
+            }
+            lines.append(QStringLiteral("P%1: %2").arg(i + 1).arg(name));
         }
         lines.append(QString());
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -2625,8 +2621,12 @@ void MainWindow::ApplyConsoleControllerMode() {
             painter.setFont(font);
             painter.setPen(Qt::white);
             int y = 6 + fm.ascent();
-            for (const QString& line : lines) {
-                painter.drawText(6, y, line);
+            for (int n = 0; n < static_cast<int>(lines.size()); ++n) {
+                if (lit_lines.contains(n)) {
+                    painter.fillRect(2, y - fm.ascent() - 1, width - 4, fm.lineSpacing(),
+                                     QColor(80, 200, 120, 170));
+                }
+                painter.drawText(6, y, lines[n]);
                 y += fm.lineSpacing();
             }
             painter.end();
@@ -2644,7 +2644,10 @@ void MainWindow::ApplyConsoleControllerMode() {
     if (!changed) {
         return;
     }
-    if (QtCommon::system && QtCommon::system->IsPoweredOn()) {
+    // Reloaded whether a game runs or not: the Controls tab reads the players back from the
+    // emulated controllers, so stale ones (the last state of a stopped game) would be written
+    // over the players when it opens, and taken for the user's edits when it closes
+    if (QtCommon::system) {
         QtCommon::system->HIDCore().ReloadInputDevices();
     }
 }
@@ -4664,6 +4667,8 @@ void MainWindow::OnConfigure() {
     const bool old_force_x11 = UISettings::values.gui_force_x11.GetValue();
 #endif
 
+    // Taken before the dialog exists: building its Controls tab already writes the players
+    const auto players_before = Settings::values.players.GetValue(true);
     Settings::SetConfiguringGlobal(true);
     ConfigureDialog configure_dialog(this, hotkey_registry, input_subsystem.get(),
                                      vk_device_records, *QtCommon::system,
@@ -4673,7 +4678,6 @@ void MainWindow::OnConfigure() {
     connect(&configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,
             &MainWindow::OnGameListRefresh);
 
-    const auto players_before = Settings::values.players.GetValue(true);
     const auto result = configure_dialog.exec();
     if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&
         !UISettings::values.reset_to_defaults) {
