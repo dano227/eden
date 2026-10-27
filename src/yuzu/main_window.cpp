@@ -1746,8 +1746,9 @@ void MainWindow::SaveAllConfigValues() {
         config->SaveAllValues();
         return;
     }
-    // A console mode drives the players at runtime; the file keeps the user's own
-    auto& players = Settings::values.players.GetValue();
+    // A console mode drives the players at runtime; the file keeps the user's own. The
+    // global copy is the one a global save writes, also while a game runs on its own copy.
+    auto& players = Settings::values.players.GetValue(true);
     std::swap(players, *console_profile);
     config->SaveAllValues();
     std::swap(players, *console_profile);
@@ -1757,7 +1758,13 @@ void MainWindow::RestoreConsoleProfile() {
     if (!console_profile) {
         return;
     }
-    Settings::values.players.GetValue() = *console_profile;
+    // Booting a game switches the players to its own copy (the per-game config read), and
+    // the engine drove that copy since. Both get the user's players back, or the global copy
+    // keeps the engine's pre-boot state and that is what the next save writes.
+    Settings::values.players.GetValue(true) = *console_profile;
+    if (!Settings::values.players.UsingGlobal()) {
+        Settings::values.players.GetValue() = *console_profile;
+    }
     console_profile.reset();
 }
 
@@ -1765,7 +1772,8 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
     if (!console_profile) {
         return;
     }
-    const auto& after = Settings::values.players.GetValue();
+    // The Controls tab edits the global copy, whatever copy a running game uses
+    const auto& after = Settings::values.players.GetValue(true);
     for (size_t i = 0; i < after.size(); ++i) {
         const auto& a = after[i];
         const auto& b = before[i];
@@ -1885,7 +1893,7 @@ void MainWindow::ApplyConsoleControllerMode() {
     if (!console_profile) {
         // Entering a console mode: the user's own players are kept aside, and everything the
         // engine changes from here on stays runtime only (see SaveAllConfigValues)
-        console_profile = Settings::values.players.GetValue();
+        console_profile = Settings::values.players.GetValue(true);
         LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside");
     }
     if (builtin_identity.empty()) {
@@ -4554,7 +4562,7 @@ void MainWindow::OnConfigure() {
     connect(&configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,
             &MainWindow::OnGameListRefresh);
 
-    const auto players_before = Settings::values.players.GetValue();
+    const auto players_before = Settings::values.players.GetValue(true);
     const auto result = configure_dialog.exec();
     if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&
         !UISettings::values.reset_to_defaults) {
