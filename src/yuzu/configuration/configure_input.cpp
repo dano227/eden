@@ -30,6 +30,9 @@
 #include <vector>
 #include <algorithm>
 #include <QTabWidget>
+#include <QRadioButton>
+#include <QHBoxLayout>
+#include <QGroupBox>
 #include <QTabBar>
 #include <QDateTime>
 #include "yuzu/configuration/configure_input_player.h"
@@ -164,6 +167,32 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
         }
     });
 
+    // Console Mode first in the Controllers tab: a mirror of the player tabs' Docked/Handheld
+    // choice, which stays the one applied (and the one player 1's Handheld type locks)
+    {
+        auto* console_box = new QGroupBox(tr("Console Mode"), assignment);
+        auto* console_layout = new QHBoxLayout(console_box);
+        auto* docked = new QRadioButton(tr("Docked"), console_box);
+        auto* handheld = new QRadioButton(tr("Handheld"), console_box);
+        console_layout->addWidget(docked);
+        console_layout->addWidget(handheld);
+        console_layout->addStretch(1);
+        assignment->AddTopWidget(console_box);
+        const auto mirror = [this, docked, handheld] {
+            docked->setChecked(ui->radioDocked->isChecked());
+            handheld->setChecked(ui->radioUndocked->isChecked());
+            docked->setEnabled(ui->radioDocked->isEnabled());
+            handheld->setEnabled(ui->radioUndocked->isEnabled());
+        };
+        connect(ui->radioDocked, &QRadioButton::toggled, this, mirror);
+        connect(ui->radioUndocked, &QRadioButton::toggled, this, mirror);
+        connect(docked, &QRadioButton::clicked, this, [this] { ui->radioDocked->setChecked(true); });
+        connect(handheld, &QRadioButton::clicked, this,
+                [this] { ui->radioUndocked->setChecked(true); });
+        mirror_console_mode = mirror;
+        mirror();
+    }
+
     {
         auto& state = Common::GetControllerConsoleState();
         std::scoped_lock lock{state.mutex};
@@ -197,6 +226,10 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
         // moment before it hides
         constexpr long long flash_ms = 1500;
         const long long now = QDateTime::currentMSecsSinceEpoch();
+        // The player tabs' choice can be locked (player 1 set to Handheld) without toggling
+        if (mirror_console_mode) {
+            mirror_console_mode();
+        }
         for (std::size_t i = 0; i < player_tabs.size(); ++i) {
             const bool assigned =
                 engine_active && std::find(active_players.begin(), active_players.end(),

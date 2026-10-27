@@ -35,6 +35,9 @@ public:
     /// How to bring a player's tab to the front (the settings dialog owns the tabs)
     void SetOpenPlayerTab(std::function<void(int)> open);
 
+    /// Puts a widget above everything else in the tab
+    void AddTopWidget(QWidget* widget);
+
 private:
     void LoadConfiguration();
     /// The controller applet mode the controls select

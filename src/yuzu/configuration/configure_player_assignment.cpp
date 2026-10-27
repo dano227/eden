@@ -615,6 +615,10 @@ void ConfigurePlayerAssignment::RequestRumble(int player) {
     state.rumble_requests.push_back(player);
 }
 
+void ConfigurePlayerAssignment::AddTopWidget(QWidget* widget) {
+    static_cast<QVBoxLayout*>(layout())->insertWidget(0, widget);
+}
+
 void ConfigurePlayerAssignment::SetOpenPlayerTab(std::function<void(int)> open) {
     open_player_tab = std::move(open);
     players_signature.clear();

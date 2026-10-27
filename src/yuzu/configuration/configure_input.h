@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <memory>
 
 #include <QKeyEvent>
@@ -86,6 +87,7 @@ private:
     std::array<long long, 8> tab_since{};
     std::array<long long, 8> tab_gone{};
     bool tabs_seeded = false;
+    std::function<void()> mirror_console_mode;
     std::array<QWidget*, 8> player_tabs{};
     // Checkboxes representing the "Connected Controllers".
     std::array<QCheckBox*, 8> connected_controller_checkboxes{};
