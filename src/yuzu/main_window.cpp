@@ -1877,9 +1877,25 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
     }
     // The Controls tab edits the global copy, whatever copy a running game uses
     const auto& after = Settings::values.players.GetValue(true);
+    // The SDL device (guid, port) a player's bindings point at
+    const auto sdl_device = [](const Settings::PlayerInput& player) {
+        for (const std::string& raw : player.buttons) {
+            const Common::ParamPackage param{raw};
+            if (!raw.empty() && param.Get("engine", "") == "sdl") {
+                return std::optional<std::pair<std::string, int>>{
+                    {param.Get("guid", ""), param.Get("port", 0)}};
+            }
+        }
+        return std::optional<std::pair<std::string, int>>{};
+    };
     for (size_t i = 0; i < after.size(); ++i) {
         const auto& a = after[i];
         const auto& b = before[i];
+        // Picking a device in the tab re-maps the player to that device's defaults: a device
+        // change is a controller swap (below), and its side-effect mapping is no edit
+        if (const auto device = sdl_device(a); device && device != sdl_device(b)) {
+            continue;
+        }
         // The connected flags and the device routing stay the engine's: the engine keeps
         // re-pointing bindings while the tab is open (the tab even switches the players to
         // the global copy the engine drives), so only mapping changes count as edits. An edit
@@ -1905,6 +1921,81 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
         }
         LOG_INFO(Frontend, "console-mode: Controls edit on P{} kept in profile P{}", i + 1,
                  target + 1);
+    }
+
+    // A controller swap from the Controls tab: a player whose device was changed to the
+    // device another player's pad holds trades slots with it (or takes it, when the player had
+    // no pad). Each pad then carries its new player's binding set; the routing pass re-points
+    // them next tick. A device no pad holds is ignored, like any other device change here.
+    if (!input_subsystem) {
+        return;
+    }
+    // The open pads and the (guid, port) each is bound as; the driver lock must not be held
+    // around GetSDLBinding, so the instances are listed first
+    std::vector<u32> instances;
+    {
+        const JoystickApiLock lock;
+        int count = 0;
+        SDL_JoystickID* ids = SDL_GetGamepads(&count);
+        for (int k = 0; k < count; ++k) {
+            instances.push_back(ids[k]);
+        }
+        SDL_free(ids);
+    }
+    std::map<u32, std::pair<std::string, int>> bound;
+    for (const u32 inst : instances) {
+        if (const auto binding = input_subsystem->GetSDLBinding(inst)) {
+            bound[inst] = *binding;
+        }
+    }
+    for (size_t i = 0; i < after.size(); ++i) {
+        const auto chosen = sdl_device(after[i]);
+        if (!chosen || chosen == sdl_device(before[i])) {
+            continue;
+        }
+        u32 pad = 0;
+        for (const auto& [inst, binding] : bound) {
+            if (binding == *chosen) {
+                pad = inst;
+                break;
+            }
+        }
+        if (!pad) {
+            continue;
+        }
+        if (pad == builtin_pad_id &&
+            Settings::values.controller_applet_mode.GetValue() ==
+                Settings::AppletMode::HandheldConsoleMode) {
+            LOG_INFO(Frontend, "console-mode: Controls swap to P{} ignored: the handheld's own pad",
+                     i + 1);
+            continue;
+        }
+        const auto pad_slot = pad_slots.find(pad);
+        if (pad_slot != pad_slots.end() && pad_slot->second == static_cast<int>(i)) {
+            continue;
+        }
+        u32 holder = 0;
+        for (const auto& [inst, slot] : pad_slots) {
+            if (slot == static_cast<int>(i) && bound.contains(inst)) {
+                holder = inst;
+                break;
+            }
+        }
+        const int from = pad_slot != pad_slots.end() ? pad_slot->second : -1;
+        if (holder) {
+            if (from >= 0) {
+                pad_slots[holder] = from;
+            } else {
+                pad_slots.erase(holder);
+                pad_identity.erase(holder);
+            }
+        }
+        pad_slots[pad] = static_cast<int>(i);
+        LOG_INFO(Frontend, "console-mode: Controls swap: inst={} P{} -> P{}{}", pad,
+                 from >= 0 ? from + 1 : 0, i + 1,
+                 holder ? fmt::format(", inst={} P{} -> P{}", holder, i + 1,
+                                      from >= 0 ? from + 1 : 0)
+                        : std::string{});
     }
 }
 
@@ -4892,8 +4983,11 @@ void MainWindow::OnConfigure() {
     const bool old_force_x11 = UISettings::values.gui_force_x11.GetValue();
 #endif
 
-    // Taken before the dialog exists: building its Controls tab already writes the players
-    const auto players_before = Settings::values.players.GetValue(true);
+    // Taken before the dialog exists: building its Controls tab already writes the players.
+    // The copy in use, not the global one: during a game the tab shows the live players
+    // (from the emulated controllers), while the global copy still holds the routing from
+    // before the game booted - a device comparison against that would invent swaps.
+    const auto players_before = Settings::values.players.GetValue();
     Settings::SetConfiguringGlobal(true);
     ConfigureDialog configure_dialog(this, hotkey_registry, input_subsystem.get(),
                                      vk_device_records, *QtCommon::system,
