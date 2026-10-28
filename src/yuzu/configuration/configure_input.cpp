@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: 2016 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <map>
 #include <memory>
 #include <thread>
 
@@ -35,6 +36,9 @@
 #include <QGroupBox>
 #include <QTabBar>
 #include <QDateTime>
+#include <QEvent>
+#include <QMouseEvent>
+#include <QToolButton>
 #include "yuzu/configuration/configure_input_player.h"
 #include "yuzu/configuration/configure_motion_touch.h"
 #include "yuzu/configuration/configure_ringcon.h"
@@ -210,6 +214,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             engine_active = state.engine_active;
             rows = state.players;
         }
+        last_rows = rows;
         // Automatic assignment owns the players: only their tabs show, and their connection
         // cannot be toggled by hand
         const auto mode = Settings::values.controller_applet_mode.GetValue();
@@ -248,14 +253,50 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                     label = QColor(40, 160, 70);
                 }
             }
-            if (tabs) {
+            if (tabs && !tab_dragging) {
                 if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
+                    if (player_tab_titles[i].isEmpty()) {
+                        player_tab_titles[i] = tabs->tabText(index);
+                    }
                     tabs->setTabVisible(index, shown);
                     tabs->tabBar()->setTabTextColor(index, label);
+                    // The tab names its controller, so dragging it reads as moving that
+                    // controller (held a moment after a drop, until the engine swapped them)
+                    if (!automatic) {
+                        tabs->setTabText(index, player_tab_titles[i]);
+                        tabs->setTabToolTip(index, {});
+                    } else if (shown && now >= tab_labels_held_until) {
+                        tabs->setTabText(index, PlayerTabText(i, row->name));
+                        tabs->setTabToolTip(
+                            index, tr("Drag left or right to change the player order"));
+                    }
                 }
             }
             player_controllers[i]->SetConnectionLocked(automatic);
         }
+        // In the automatic modes the player tabs drag to change the player order
+        if (tabs) {
+            tabs->setMovable(automatic && engine_active && tabs->indexOf(player_tabs[0]) >= 0);
+            if (tabs != drag_tabs) {
+                drag_tabs = tabs;
+                tabs->tabBar()->installEventFilter(this);
+                connect(tabs, &QTabWidget::currentChanged, this,
+                        &ConfigureInput::UpdateTabArrows);
+            }
+            if (pending_select >= 0) {
+                const int index = tabs->indexOf(player_tabs[pending_select]);
+                if (index >= 0 && tabs->isTabVisible(index)) {
+                    tabs->setCurrentIndex(index);
+                    pending_select = -1;
+                } else if (now > pending_select_until) {
+                    pending_select = -1;
+                }
+            }
+            if (!tab_dragging) {
+                UpdateTabArrows();
+            }
+        }
+
         // Clicking a player's tab rumbles its controller in the automatic modes, so the user
         // can tell which controller the tab is about (tab changes made by the code do not)
         if (tabs && tabs != rumble_tabs) {
@@ -363,6 +404,175 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
     if (reconnect_current) {
         connected_controller_checkboxes[player_index]->setCheckState(Qt::Checked);
     }
+}
+
+QString ConfigureInput::PlayerTabText(std::size_t player, const std::string& name) const {
+    QString controller = QString::fromStdString(name);
+    if (controller.size() > 18) {
+        controller = controller.left(17) + QStringLiteral("\u2026");
+    }
+    return QStringLiteral("\u283F %1 \u00b7 %2").arg(player_tab_titles[player], controller);
+}
+
+void ConfigureInput::SwapPlayers(int a, int b) {
+    if (a == b || a < 0 || b < 0 || a >= 8 || b >= 8) {
+        return;
+    }
+    auto& state = Common::GetControllerConsoleState();
+    std::scoped_lock lock{state.mutex};
+    state.swap_requests.emplace_back(a, b);
+}
+
+bool ConfigureInput::eventFilter(QObject* object, QEvent* event) {
+    if (drag_tabs && object == drag_tabs->tabBar() && drag_tabs->isMovable()) {
+        if (event->type() == QEvent::MouseButtonPress &&
+            static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+            tab_order.clear();
+            for (int k = 0; k < drag_tabs->count(); ++k) {
+                tab_order.push_back(drag_tabs->widget(k));
+            }
+            const QPoint at = static_cast<QMouseEvent*>(event)->position().toPoint();
+            dragged_tab = drag_tabs->widget(drag_tabs->tabBar()->tabAt(at));
+            tab_dragging = true;
+        } else if (event->type() == QEvent::MouseButtonRelease && tab_dragging) {
+            tab_dragging = false;
+            // After the tab bar has finished its own drop
+            QTimer::singleShot(0, this, &ConfigureInput::FinishTabDrag);
+        }
+    }
+    return QWidget::eventFilter(object, event);
+}
+
+void ConfigureInput::FinishTabDrag() {
+    QTabWidget* tabs = drag_tabs;
+    if (!tabs || tab_order.isEmpty()) {
+        return;
+    }
+    // The players in the order their tabs were dropped in
+    std::vector<int> dropped;
+    for (int k = 0; k < tabs->count(); ++k) {
+        const auto it = std::find(player_tabs.begin(), player_tabs.end(), tabs->widget(k));
+        if (it != player_tabs.end() && tabs->isTabVisible(k)) {
+            dropped.push_back(static_cast<int>(it - player_tabs.begin()));
+        }
+    }
+    // The tabs go back in player order: the controllers move instead
+    for (int k = 0; k < static_cast<int>(tab_order.size()); ++k) {
+        const int from = tabs->indexOf(tab_order[k]);
+        if (from >= 0 && from != k) {
+            tabs->tabBar()->moveTab(from, k);
+        }
+    }
+    tab_order.clear();
+    std::vector<int> places = dropped;
+    std::sort(places.begin(), places.end());
+    if (dropped == places) {
+        return;
+    }
+
+    // Place k takes the controller player dropped[k] has now, as one swap at a time (the
+    // engine applies them in order)
+    std::map<int, int> holder;
+    for (const int place : places) {
+        holder[place] = place;
+    }
+    for (std::size_t k = 0; k < places.size(); ++k) {
+        int from = places[k];
+        for (const auto& [place, original] : holder) {
+            if (original == dropped[k]) {
+                from = place;
+            }
+        }
+        if (from != places[k]) {
+            SwapPlayers(places[k], from);
+            std::swap(holder[places[k]], holder[from]);
+        }
+    }
+
+    // The labels show the new order right away; the engine catches up on its next pass
+    const auto name_of = [this](int player) {
+        for (const auto& row : last_rows) {
+            if (row.player == player) {
+                return row.name;
+            }
+        }
+        return std::string{};
+    };
+    for (std::size_t k = 0; k < places.size(); ++k) {
+        if (const int index = tabs->indexOf(player_tabs[places[k]]); index >= 0) {
+            tabs->setTabText(index, PlayerTabText(places[k], name_of(dropped[k])));
+        }
+    }
+    tab_labels_held_until = QDateTime::currentMSecsSinceEpoch() + 800;
+
+    // The selected tab follows the controller that was dragged
+    const auto dragged = std::find(player_tabs.begin(), player_tabs.end(), dragged_tab);
+    if (dragged != player_tabs.end()) {
+        const auto at = std::find(dropped.begin(), dropped.end(),
+                                  static_cast<int>(dragged - player_tabs.begin()));
+        if (at != dropped.end()) {
+            pending_select = places[at - dropped.begin()];
+            pending_select_until = QDateTime::currentMSecsSinceEpoch() + 2000;
+        }
+    }
+}
+
+void ConfigureInput::UpdateTabArrows() {
+    QTabWidget* tabs = drag_tabs;
+    if (!tabs) {
+        return;
+    }
+    // (The buttons go when their tab is removed, as on leaving the Controls page)
+    if (!tab_left || !tab_right) {
+        arrows_tab = nullptr;
+        const auto make = [this](Qt::ArrowType arrow, int step) {
+            auto* button = new QToolButton;
+            button->setArrowType(arrow);
+            button->setAutoRaise(true);
+            button->setFixedSize(18, 18);
+            connect(button, &QToolButton::clicked, this, [this, step] {
+                if (arrows_player < 0) {
+                    return;
+                }
+                SwapPlayers(arrows_player, arrows_player + step);
+                pending_select = arrows_player + step;
+                pending_select_until = QDateTime::currentMSecsSinceEpoch() + 2000;
+            });
+            return button;
+        };
+        tab_left = make(Qt::LeftArrow, -1);
+        tab_right = make(Qt::RightArrow, 1);
+    }
+    const auto it = std::find(player_tabs.begin(), player_tabs.end(), tabs->currentWidget());
+    const int player =
+        tabs->isMovable() && it != player_tabs.end() ? static_cast<int>(it - player_tabs.begin())
+                                                     : -1;
+    QWidget* want = player >= 0 ? player_tabs[player] : nullptr;
+    if (want != arrows_tab) {
+        if (const int old = arrows_tab ? tabs->indexOf(arrows_tab) : -1; old >= 0) {
+            tabs->tabBar()->setTabButton(old, QTabBar::LeftSide, nullptr);
+            tabs->tabBar()->setTabButton(old, QTabBar::RightSide, nullptr);
+        }
+        arrows_tab = want;
+        if (want) {
+            const int index = tabs->indexOf(want);
+            tabs->tabBar()->setTabButton(index, QTabBar::LeftSide, tab_left);
+            tabs->tabBar()->setTabButton(index, QTabBar::RightSide, tab_right);
+        }
+        tab_left->setVisible(want != nullptr);
+        tab_right->setVisible(want != nullptr);
+    }
+    arrows_player = player;
+    int last_player = -1;
+    for (const auto& row : last_rows) {
+        if (!row.leaving) {
+            last_player = (std::max)(last_player, row.player);
+        }
+    }
+    tab_left->setEnabled(player > 0);
+    tab_left->setToolTip(tr("Swap with Player %1").arg(player));
+    tab_right->setEnabled(player >= 0 && player < last_player);
+    tab_right->setToolTip(tr("Swap with Player %1").arg(player + 2));
 }
 
 QList<QWidget*> ConfigureInput::GetSubTabs() const {

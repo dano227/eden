@@ -23,13 +23,16 @@
 #include <QPushButton>
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QDir>
 #include <QRadioButton>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include "common/controller_console_state.h"
+#include "common/fs/path_util.h"
 #include "common/settings.h"
 #include "yuzu/configuration/configure_player_assignment.h"
+#include "yuzu/configuration/input_profiles.h"
 
 namespace {
 
@@ -456,11 +459,27 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         }
     }
 
+    // The saved input profiles, by their files (cheap enough to look at every refresh)
+    QStringList profiles;
+    {
+        const QDir dir{QString::fromStdString(Common::FS::PathToUTF8String(
+            Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "input"))};
+        for (const QString& file : dir.entryList({QStringLiteral("*.ini")}, QDir::Files,
+                                                 QDir::Name)) {
+            const QString name = file.chopped(4);
+            if (InputProfiles::IsProfileNameValid(name.toStdString())) {
+                profiles.push_back(name);
+            }
+        }
+    }
+
     // Rebuild the rows when they change; the colours only restyle them
-    QString signature = QString::number(swap_from) + QLatin1Char(';');
+    QString signature = QString::number(swap_from) + QLatin1Char(';') +
+                        profiles.join(QLatin1Char(',')) + QLatin1Char(';');
     for (const auto& entry : players) {
         signature += QString::number(entry.player) + QLatin1Char(':') +
-                     QString::fromStdString(entry.name) +
+                     QString::fromStdString(entry.name) + QLatin1Char('/') +
+                     QString::fromStdString(entry.profile) +
                      (entry.leaving ? QStringLiteral("x") : QString{}) + QLatin1Char('|');
     }
     if (!handheld_has_player) {
@@ -490,6 +509,22 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->addWidget(new QLabel(QStringLiteral("P%1").arg(player + 1), row));
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
             const bool live = !entry.leaving;
+
+            // The profile the player's controller carries; picking one puts it on it
+            auto* profile = new QComboBox(row);
+            profile->setPlaceholderText(tr("No profile"));
+            profile->addItems(profiles);
+            profile->setCurrentIndex(profiles.indexOf(QString::fromStdString(entry.profile)));
+            profile->setToolTip(tr("Mapping profile for P%1's controller").arg(player + 1));
+            profile->setEnabled(live && !profiles.isEmpty());
+            connect(profile, qOverload<int>(&QComboBox::activated), this,
+                    [player, profile](int index) {
+                        auto& console = Common::GetControllerConsoleState();
+                        std::scoped_lock lock{console.mutex};
+                        console.profile_requests.emplace_back(
+                            player, profile->itemText(index).toStdString());
+                    });
+            line->addWidget(profile);
 
             auto* up = new QPushButton(QStringLiteral("\u25B2"), row);
             up->setToolTip(tr("Swap with P%1").arg(player));

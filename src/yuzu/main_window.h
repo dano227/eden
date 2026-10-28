@@ -579,6 +579,12 @@ private:
     /// connection instance -> stable identity (serial, else model GUID), for matching a
     /// returning pad that comes back under a new instance
     std::map<u32, std::string> pad_identity;
+    /// identity -> the binding set (a player's mappings in the user's setup) the controller
+    /// carries for the session: a controller keeps its own mappings when it changes player
+    std::map<std::string, int> pad_sets;
+    /// player -> the set its controller carries, as of the last tick (the player's own when
+    /// it has no controller)
+    std::array<int, 10> slot_set{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     /// The handheld's own pad (connection instance): never a player while other pads are
     /// connected
     u32 builtin_pad_id = 0;

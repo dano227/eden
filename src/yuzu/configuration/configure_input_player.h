@@ -208,6 +208,8 @@ private:
     QTimer* card_timer{};
     std::string card_profile_key;
     QString card_profile_name;
+    /// The profile the engine last reported for this player
+    QString card_engine_profile;
 
     InputCommon::InputSubsystem* input_subsystem;
 

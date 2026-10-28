@@ -55,6 +55,7 @@
 #include "configuration/configure_input.h"
 #include "configuration/configure_per_game.h"
 #include "configuration/configure_tas.h"
+#include "configuration/input_profiles.h"
 
 #include "util/clickable_label.h"
 #include "util/controller_navigation.h"
@@ -1927,6 +1928,33 @@ std::string BindingMapping(const std::string& raw) {
     return out;
 }
 
+/// Puts a profile's mappings on a binding set, keeping the set's own controller (guid, port)
+/// on SDL bindings: the set stays on whatever controller carries it
+void ApplyProfileMappings(Settings::PlayerInput& set, const Settings::PlayerInput& profile) {
+    const auto apply = [](auto& to, const auto& from) {
+        for (size_t i = 0; i < to.size(); ++i) {
+            Common::ParamPackage taken{from[i]};
+            const Common::ParamPackage kept{to[i]};
+            if (!from[i].empty() && !to[i].empty() && taken.Get("engine", "") == "sdl" &&
+                kept.Get("engine", "") == "sdl") {
+                taken.Set("guid", kept.Get("guid", ""));
+                taken.Set("port", kept.Get("port", 0));
+                if (kept.Has("guid2")) {
+                    taken.Set("guid2", kept.Get("guid2", ""));
+                } else {
+                    taken.Erase("guid2");
+                }
+                to[i] = taken.Serialize();
+            } else {
+                to[i] = from[i];
+            }
+        }
+    };
+    apply(set.buttons, profile.buttons);
+    apply(set.analogs, profile.analogs);
+    apply(set.motions, profile.motions);
+}
+
 /// Brings the edited mappings of one binding array into the profile's, keeping the profile's
 /// own device (guid, port) on SDL bindings: that device is what the user's profile drives
 /// outside the console modes. True when anything was taken.
@@ -2001,11 +2029,8 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
         // re-pointing bindings while the tab is open (the tab even switches the players to
         // the global copy the engine drives), so only mapping changes count as edits. An edit
         // on the handheld's own pad goes to player one's set, the one it carries everywhere.
-        size_t target = i;
         const auto own = pad_slots.find(builtin_pad_id);
-        if (builtin_pad_id && own != pad_slots.end() && own->second == static_cast<int>(i)) {
-            target = 0;
-        }
+        size_t target = static_cast<size_t>(slot_set[i]);
         auto& p = (*console_profile)[target];
         bool edited = MergeMappings(p.buttons, b.buttons, a.buttons);
         edited = MergeMappings(p.analogs, b.analogs, a.analogs) || edited;
@@ -2529,6 +2554,8 @@ void MainWindow::ApplyConsoleControllerMode() {
             RestoreConsoleProfile();
             pad_slots.clear();
             pad_identity.clear();
+            pad_sets.clear();
+            slot_set = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
             LOG_INFO(Frontend, "console-mode: left, the user's players are restored");
             if (QtCommon::system && QtCommon::system->IsPoweredOn()) {
                 QtCommon::system->HIDCore().ReloadInputDevices();
@@ -3102,6 +3129,41 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
+    // Profiles picked in the Controls page: their mappings go on the set the player's
+    // controller carries (part of the user's own setup, so they are kept), on its device
+    {
+        std::vector<std::pair<int, std::string>> picks;
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            picks.swap(state.profile_requests);
+        }
+        std::optional<InputProfiles> input_profiles;
+        for (const auto& [player, name] : picks) {
+            if (!console_profile || player < 0 || player >= static_cast<int>(players.size())) {
+                continue;
+            }
+            const int set = slot_set[player];
+            const bool game_set = game_profiles && !(*game_profiles)[set].profile_name.empty();
+            auto& target = game_set ? (*game_profiles)[set] : (*console_profile)[set];
+            if (!name.empty()) {
+                if (!input_profiles) {
+                    input_profiles.emplace();
+                }
+                const auto read = input_profiles->PeekProfile(name, player);
+                if (!read) {
+                    LOG_WARNING(Frontend, "console-mode: input profile \"{}\" not found", name);
+                    continue;
+                }
+                ApplyProfileMappings(target, *read);
+            }
+            target.profile_name = name;
+            LOG_INFO(Frontend, "console-mode: P{} input profile \"{}\" on the P{} set{}",
+                     player + 1, name, set + 1, game_set ? " (the game's)" : "");
+            changed = true;
+        }
+    }
+
     // Rumble requested from the Controllers tab: a short pulse on the player's controller
     {
         std::vector<int> rumbles;
@@ -3134,6 +3196,7 @@ void MainWindow::ApplyConsoleControllerMode() {
     // external pad takes its slot's set, minus the handheld's non-SDL motion, plus its own
     // SDL gyro when it has one and the set has no motion. A pad the driver has not opened
     // yet is retried next tick.
+    slot_set = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     if (input_subsystem && console_profile) {
         const auto profile = ConsoleBindingSets();
         const auto is_handheld_motion = [&profile](const std::string& raw) {
@@ -3155,6 +3218,24 @@ void MainWindow::ApplyConsoleControllerMode() {
             }
             const int slot = it->second;
             const bool is_builtin = builtin_valid && id == builtin_match_id;
+            // A controller carries the set it first got for the session: its slot's, unless
+            // another controller has that one (after a swap), then the first set nobody has
+            if (!is_builtin && !pad_sets.contains(ident)) {
+                std::set<int> taken;
+                for (const auto& [other, set] : pad_sets) {
+                    taken.insert(set);
+                }
+                int set = slot;
+                for (int k = 0; taken.contains(set) && k < static_cast<int>(players.size());
+                     ++k) {
+                    set = k;
+                }
+                if (taken.contains(set)) {
+                    set = slot;
+                }
+                pad_sets[ident] = set;
+                LOG_INFO(Frontend, "console-mode: inst={} carries the P{} set", id, set + 1);
+            }
             // A slot the user never bound a controller to (keyboard or empty, P6+ typically)
             // would leave its pad dead: borrow the nearest lower external slot's set.
             const auto has_sdl = [](const Settings::PlayerInput& p) {
@@ -3162,9 +3243,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                     return !b.empty() && Common::ParamPackage{b}.Get("engine", "") == "sdl";
                 });
             };
-            int set_index = is_builtin ? 0 : slot;
+            int set_index = is_builtin ? 0 : pad_sets[ident];
             if (!is_builtin && !has_sdl(profile[set_index])) {
-                for (int k = slot - 1; k >= 0; --k) {
+                for (int k = set_index - 1; k >= 0; --k) {
                     if (has_sdl(profile[k]) && (k > 0 || !builtin_valid || !handheld)) {
                         set_index = k;
                         break;
@@ -3172,10 +3253,12 @@ void MainWindow::ApplyConsoleControllerMode() {
                 }
             }
             const auto& own = profile[set_index];
+            slot_set[slot] = set_index;
             Settings::PlayerInput want = players[slot];
             want.buttons = own.buttons;
             want.analogs = own.analogs;
             want.motions = own.motions;
+            want.profile_name = own.profile_name;
             RouteSdlBindings(want, binding->first, binding->second);
             // Under Steam the virtual pad has no motion: take the paired real device's. The
             // deck's own controller is unique (28DE:1205); another model pairs when only one
@@ -3224,6 +3307,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 }
             }
             auto& player = players[slot];
+            player.profile_name = want.profile_name;
             if (player.buttons != want.buttons || player.analogs != want.analogs ||
                 player.motions != want.motions) {
                 player.buttons = want.buttons;
@@ -3375,7 +3459,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                                            overlay_row_name[i]),
                                     gone != 0 ? 0u : pad, flash, flash_since});
             tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
-                                flash_since});
+                                flash_since, ConsoleBindingSets()[slot_set[i]].profile_name});
         }
         {
             std::string handheld_name;

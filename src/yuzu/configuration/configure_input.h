@@ -9,10 +9,16 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <QKeyEvent>
 #include <QList>
+#include <QPointer>
+#include <QToolButton>
 #include <QWidget>
+
+#include "common/controller_console_state.h"
 
 namespace Core {
 class System;
@@ -56,6 +62,14 @@ public:
 
 private:
     void changeEvent(QEvent* event) override;
+    bool eventFilter(QObject* object, QEvent* event) override;
+
+    /// Player tabs dropped in a new order: the controllers take that order, the tabs go back
+    void FinishTabDrag();
+    /// The arrows on the selected player tab, swapping with the player before or after it
+    void UpdateTabArrows();
+    void SwapPlayers(int a, int b);
+    QString PlayerTabText(std::size_t player, const std::string& name) const;
     void RetranslateUI();
     void ClearAll();
 
@@ -87,6 +101,22 @@ private:
     /// The settings dialog's tab widget whose tab clicks rumble the players' controllers
     QTabWidget* rumble_tabs = nullptr;
     std::array<QWidget*, 8> player_tabs{};
+    /// Dragging the player tabs (the automatic modes): the tab bar watched, the tab order when
+    /// the drag began, and how long the labels keep the order just dropped
+    QTabWidget* drag_tabs = nullptr;
+    QList<QWidget*> tab_order;
+    QWidget* dragged_tab = nullptr;
+    bool tab_dragging = false;
+    long long tab_labels_held_until = 0;
+    std::array<QString, 8> player_tab_titles{};
+    std::vector<Common::ControllerConsoleState::PlayerRow> last_rows;
+    QPointer<QToolButton> tab_left;
+    QPointer<QToolButton> tab_right;
+    QWidget* arrows_tab = nullptr;
+    int arrows_player = -1;
+    /// The tab to select once its player shows (the controller a drag or an arrow moved)
+    int pending_select = -1;
+    long long pending_select_until = 0;
     // Checkboxes representing the "Connected Controllers".
     std::array<QCheckBox*, 8> connected_controller_checkboxes{};
     ConfigureInputAdvanced* advanced = nullptr;
