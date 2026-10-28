@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
@@ -26,6 +28,7 @@
 #include <QDir>
 #include <QRadioButton>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "common/controller_console_state.h"
@@ -46,6 +49,43 @@ bool IsAutomatic(Settings::AppletMode mode) {
 }
 
 constexpr int MaxPlayers = 8;
+
+/// The players' colours, as the overlay draws their badges
+constexpr std::array<QColor, 8> PlayerColors{
+    QColor(79, 142, 247), QColor(239, 91, 91), QColor(47, 191, 113), QColor(245, 184, 46),
+    QColor(155, 108, 242), QColor(242, 140, 56), QColor(46, 196, 201), QColor(227, 107, 174),
+};
+
+/// An on/off switch: a rounded track with a knob, like a phone's settings
+class ToggleSwitch : public QAbstractButton {
+public:
+    explicit ToggleSwitch(QWidget* parent) : QAbstractButton(parent) {
+        setCheckable(true);
+        setCursor(Qt::PointingHandCursor);
+    }
+
+    QSize sizeHint() const override {
+        return {42, 24};
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter{this};
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        const QRectF track = QRectF(rect()).adjusted(1, 1, -1, -1);
+        QColor fill = isChecked() ? palette().highlight().color() : palette().mid().color();
+        if (!isEnabled()) {
+            fill.setAlpha(110);
+        }
+        painter.setBrush(fill);
+        painter.drawRoundedRect(track, track.height() / 2, track.height() / 2);
+        const qreal knob = track.height() - 6;
+        const qreal x = isChecked() ? track.right() - 3 - knob : track.left() + 3;
+        painter.setBrush(Qt::white);
+        painter.drawEllipse(QRectF(x, track.top() + 3, knob, knob));
+    }
+};
 constexpr char PlayerMime[] = "application/x-eden-player";
 
 /// One player in the list: a click rumbles its controller, and a long press (or a drag) picks
@@ -153,49 +193,59 @@ private:
 
 } // Anonymous namespace
 
+QWidget* ConfigurePlayerAssignment::MakeSegmented(QWidget* parent, const QStringList& labels,
+                                                 const std::vector<int>& ids,
+                                                 QButtonGroup* group) {
+    auto* bar = new QWidget(parent);
+    auto* bar_layout = new QHBoxLayout(bar);
+    bar_layout->setContentsMargins(0, 0, 0, 0);
+    bar_layout->setSpacing(0);
+    for (int k = 0; k < labels.size(); ++k) {
+        auto* button = new QPushButton(labels[k], bar);
+        button->setCheckable(true);
+        button->setCursor(Qt::PointingHandCursor);
+        QString style = QStringLiteral(
+            "QPushButton { padding: 5px 14px; border: 1px solid palette(mid); "
+            "background: palette(button); }"
+            "QPushButton:checked { background: palette(highlight); "
+            "color: palette(highlighted-text); border-color: palette(highlight); }"
+            "QPushButton:disabled { color: palette(mid); }");
+        if (k == 0) {
+            style += QStringLiteral("QPushButton { border-top-left-radius: 6px; "
+                                    "border-bottom-left-radius: 6px; }");
+        } else {
+            style += QStringLiteral("QPushButton { border-left-width: 0px; }");
+        }
+        if (k == labels.size() - 1) {
+            style += QStringLiteral("QPushButton { border-top-right-radius: 6px; "
+                                    "border-bottom-right-radius: 6px; }");
+        }
+        button->setStyleSheet(style);
+        group->addButton(button, ids[static_cast<std::size_t>(k)]);
+        bar_layout->addWidget(button);
+    }
+    return bar;
+}
+
 ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
+    layout->setSpacing(12);
+    // Each section is a rounded card with its title on the edge
+    setStyleSheet(QStringLiteral(
+        "QGroupBox { border: 1px solid palette(mid); border-radius: 10px; margin-top: 12px; "
+        "padding: 12px 10px 8px 10px; background: palette(alternate-base); }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 4px; "
+        "font-weight: bold; }"));
 
     // The controller applet's mode, as a segmented control: Manual (players set by hand),
     // Modern Console (automatic) and Real Hardware (the console's own applet)
     auto* mode_box = new QGroupBox(tr("Controller Assignment Handler"), this);
     auto* mode_layout = new QVBoxLayout(mode_box);
-    const auto segmented = [](QWidget* parent, const QStringList& labels,
-                                  const std::vector<int>& ids, QButtonGroup* group) {
-        auto* bar = new QWidget(parent);
-        auto* bar_layout = new QHBoxLayout(bar);
-        bar_layout->setContentsMargins(0, 0, 0, 0);
-        bar_layout->setSpacing(0);
-        for (int k = 0; k < labels.size(); ++k) {
-            auto* button = new QPushButton(labels[k], bar);
-            button->setCheckable(true);
-            button->setCursor(Qt::PointingHandCursor);
-            QString style = QStringLiteral(
-                "QPushButton { padding: 5px 14px; border: 1px solid palette(mid); "
-                "background: palette(button); }"
-                "QPushButton:checked { background: palette(highlight); "
-                "color: palette(highlighted-text); border-color: palette(highlight); }");
-            if (k == 0) {
-                style += QStringLiteral("QPushButton { border-top-left-radius: 6px; "
-                                        "border-bottom-left-radius: 6px; }");
-            } else {
-                style += QStringLiteral("QPushButton { border-left-width: 0px; }");
-            }
-            if (k == labels.size() - 1) {
-                style += QStringLiteral("QPushButton { border-top-right-radius: 6px; "
-                                        "border-bottom-right-radius: 6px; }");
-            }
-            button->setStyleSheet(style);
-            group->addButton(button, ids[static_cast<std::size_t>(k)]);
-            bar_layout->addWidget(button);
-        }
-        return bar;
-    };
     handler_group = new QButtonGroup(this);
     auto* handler_row = new QHBoxLayout();
-    handler_row->addWidget(segmented(mode_box,
-                                     {tr("Manual"), tr("Modern Console"), tr("Real Hardware")},
-                                     {HandlerManual, HandlerModern, HandlerReal}, handler_group));
+    handler_row->addWidget(MakeSegmented(mode_box,
+                                     {tr("Manual"), tr("Real Hardware"), tr("Modern Console")},
+                                     {HandlerManual, HandlerReal, HandlerModern}, handler_group));
     handler_row->addStretch(1);
     mode_layout->addLayout(handler_row);
 
@@ -204,7 +254,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     handheld_panel->setObjectName(QStringLiteral("handheldPanel"));
     handheld_panel->setStyleSheet(QStringLiteral(
         "#handheldPanel { border: 1px solid palette(mid); border-radius: 8px; "
-        "background: palette(alternate-base); }"));
+        "background: palette(base); }"));
     auto* panel_layout = new QHBoxLayout(handheld_panel);
     panel_layout->setContentsMargins(12, 8, 12, 8);
     auto* panel_text = new QVBoxLayout();
@@ -224,7 +274,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     panel_text->addWidget(panel_note);
     panel_layout->addLayout(panel_text, 1);
     handheld_group = new QButtonGroup(this);
-    panel_layout->addWidget(segmented(handheld_panel, {tr("Yes"), tr("No")}, {1, 0},
+    panel_layout->addWidget(MakeSegmented(handheld_panel, {tr("Yes"), tr("No")}, {1, 0},
                                       handheld_group),
                             0, Qt::AlignVCenter);
     auto* indent = new QHBoxLayout();
@@ -259,29 +309,53 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     players_box = new QWidget(now_box);
     players_list = new QVBoxLayout(players_box);
     players_list->setContentsMargins(0, 0, 0, 0);
-    players_list->setSpacing(2);
+    players_list->setSpacing(6);
     now_layout->addWidget(players_box);
     players_note = new QLabel(now_box);
     players_note->setWordWrap(true);
     now_layout->addWidget(players_note);
     layout->addWidget(now_box);
 
-    // The same toggle as View > Show Controller Overlay
-    overlay_toggle = new QCheckBox(tr("Show Controller Overlay"), this);
-    overlay_toggle->setToolTip(tr("Shows the players and their controllers over the game."));
+    // What shows over the game: a title, a line about it and a switch per item
+    auto* display = new QGroupBox(tr("On-Screen Display"), this);
+    display_box = display;
+    auto* display_layout = new QVBoxLayout(display);
+    const auto add_switch = [display, display_layout](const QString& title,
+                                                      const QString& note) {
+        auto* line = new QHBoxLayout();
+        auto* text = new QVBoxLayout();
+        text->setSpacing(1);
+        auto* title_label = new QLabel(title, display);
+        QFont font = title_label->font();
+        font.setBold(true);
+        title_label->setFont(font);
+        auto* note_label = new QLabel(note, display);
+        note_label->setWordWrap(true);
+        note_label->setEnabled(false);
+        text->addWidget(title_label);
+        text->addWidget(note_label);
+        line->addLayout(text, 1);
+        auto* toggle = new ToggleSwitch(display);
+        line->addWidget(toggle, 0, Qt::AlignVCenter);
+        display_layout->addLayout(line);
+        return toggle;
+    };
+    // The same switch as View > Show Controller Overlay
+    overlay_toggle = add_switch(tr("Controller Overlay"),
+                                tr("The players, their controllers and their last buttons in "
+                                   "the top-left corner."));
     original_overlay = Settings::values.console_debug_overlay.GetValue();
     overlay_toggle->setChecked(original_overlay);
-    connect(overlay_toggle, &QCheckBox::toggled, this,
+    connect(overlay_toggle, &QAbstractButton::toggled, this,
             [](bool shown) { Settings::values.console_debug_overlay.SetValue(shown); });
-    layout->addWidget(overlay_toggle);
-    hints_toggle = new QCheckBox(tr("Show Controller Hints"), this);
-    hints_toggle->setToolTip(tr("Names a controller in the screen's bottom-left corner for a "
-                                "moment when it joins as a player or leaves."));
+    hints_toggle = add_switch(tr("Controller Hints"),
+                              tr("Names a controller in the bottom-left corner for a moment "
+                                 "when it joins as a player or leaves."));
     original_hints = Settings::values.console_hints.GetValue();
     hints_toggle->setChecked(original_hints);
-    connect(hints_toggle, &QCheckBox::toggled, this,
+    connect(hints_toggle, &QAbstractButton::toggled, this,
             [](bool shown) { Settings::values.console_hints.SetValue(shown); });
-    layout->addWidget(hints_toggle);
+    layout->addWidget(display);
     layout->addStretch(1);
 
     // The mode applies at once, so the players switch while the dialog is open; closing it
@@ -391,8 +465,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
         break;
     }
     now_box->setVisible(automatic);
-    overlay_toggle->setVisible(automatic);
-    hints_toggle->setVisible(automatic);
+    display_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }
@@ -566,11 +639,21 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             row->on_click = [this](int p) { RequestRumble(p); };
             row->on_drop = [this](int from, int to) { RequestSwap(from, to); };
             auto* line = new QHBoxLayout(row);
-            line->setContentsMargins(6, 3, 4, 3);
+            line->setContentsMargins(8, 5, 6, 5);
+            line->setSpacing(6);
             auto* grip = new QLabel(QStringLiteral("\u283F"), row);
             grip->setToolTip(tr("Drag onto another player to swap"));
+            grip->setEnabled(false);
             line->addWidget(grip);
-            line->addWidget(new QLabel(QStringLiteral("P%1").arg(player + 1), row));
+            // The player's badge, in the overlay's colour for that player
+            auto* badge = new QLabel(QStringLiteral("P%1").arg(player + 1), row);
+            badge->setAlignment(Qt::AlignCenter);
+            badge->setFixedSize(34, 20);
+            badge->setStyleSheet(QStringLiteral("QLabel { background: %1; color: white; "
+                                                "border-radius: 10px; font-weight: bold; }")
+                                     .arg(PlayerColors[static_cast<std::size_t>(player) % 8]
+                                              .name()));
+            line->addWidget(badge);
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
             const bool live = !entry.leaving;
 
@@ -597,35 +680,40 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                     });
             line->addWidget(profile);
             // The quick way to take the profile off (as "No profile")
-            auto* remove = new QPushButton(QStringLiteral("\u2715"), row);
+            auto* remove = new QToolButton(row);
+            remove->setText(QStringLiteral("\u2715"));
+            remove->setAutoRaise(true);
             remove->setToolTip(tr("Remove the profile from P%1").arg(player + 1));
             remove->setFixedWidth(remove->sizeHint().height());
             remove->setVisible(!entry.profile.empty());
             remove->setEnabled(live);
-            connect(remove, &QPushButton::clicked, this, [player] {
+            connect(remove, &QToolButton::clicked, this, [player] {
                 auto& console = Common::GetControllerConsoleState();
                 std::scoped_lock lock{console.mutex};
                 console.profile_requests.push_back({player, {}, true});
             });
             line->addWidget(remove);
 
-            auto* up = new QPushButton(QStringLiteral("\u25B2"), row);
+            auto* up = new QToolButton(row);
+            up->setArrowType(Qt::UpArrow);
+            up->setAutoRaise(true);
             up->setToolTip(tr("Swap with P%1").arg(player));
             up->setEnabled(live && player > 0);
-            connect(up, &QPushButton::clicked, this,
+            connect(up, &QToolButton::clicked, this,
                     [this, player] { RequestSwap(player, player - 1); });
             line->addWidget(up);
-            auto* down = new QPushButton(QStringLiteral("\u25BC"), row);
+            auto* down = new QToolButton(row);
+            down->setArrowType(Qt::DownArrow);
+            down->setAutoRaise(true);
             down->setToolTip(tr("Swap with P%1").arg(player + 2));
             down->setEnabled(live && player < last_player);
-            connect(down, &QPushButton::clicked, this,
+            connect(down, &QToolButton::clicked, this,
                     [this, player] { RequestSwap(player, player + 1); });
             line->addWidget(down);
-            for (auto* arrow : {up, down}) {
-                arrow->setFixedWidth(arrow->sizeHint().height() + 6);
-            }
 
-            auto* swap = new QPushButton(row);
+
+            auto* swap = new QToolButton(row);
+            swap->setAutoRaise(true);
             if (swap_from < 0) {
                 swap->setText(tr("Swap"));
             } else if (swap_from == player) {
@@ -634,13 +722,15 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                 swap->setText(tr("Swap with P%1").arg(swap_from + 1));
             }
             swap->setEnabled(live);
-            connect(swap, &QPushButton::clicked, this, [this, player] { OnSwapPressed(player); });
+            connect(swap, &QToolButton::clicked, this, [this, player] { OnSwapPressed(player); });
             line->addWidget(swap);
 
-            auto* settings = new QPushButton(tr("Settings"), row);
+            auto* settings = new QToolButton(row);
+            settings->setText(tr("Settings"));
+            settings->setAutoRaise(true);
             settings->setToolTip(tr("Open Player %1's tab").arg(player + 1));
             settings->setEnabled(static_cast<bool>(open_player_tab));
-            connect(settings, &QPushButton::clicked, this, [this, player] {
+            connect(settings, &QToolButton::clicked, this, [this, player] {
                 if (open_player_tab) {
                     open_player_tab(player);
                 }
@@ -670,11 +760,11 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     // Red while leaving; blue while its controller has an input held or was just clicked to
     // rumble (pressing a button shows which controller is which player); green when new
     // Rows look like cards that can be picked up; a fill marks what is happening to them
-    const QString card = QStringLiteral(
-        "QFrame#playerRow { border: 1px solid palette(mid); border-radius: 4px; }");
+    const QString card = QStringLiteral("QFrame#playerRow { border: 1px solid palette(mid); "
+                                        "border-radius: 8px; background: palette(base); }");
     const auto fill = [](const char* rgba) {
         return QStringLiteral("QFrame#playerRow { border: 1px solid palette(mid); border-radius: "
-                              "4px; background-color: rgba(%1); } "
+                              "8px; background-color: rgba(%1); } "
                               "QFrame#playerRow QLabel { color: white; }")
             .arg(QString::fromLatin1(rgba));
     };

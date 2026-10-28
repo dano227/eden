@@ -31,6 +31,7 @@
 #include <vector>
 #include <algorithm>
 #include <QTabWidget>
+#include <QButtonGroup>
 #include <QRadioButton>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -176,11 +177,12 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     {
         auto* console_box = new QGroupBox(tr("Console Mode"), assignment);
         auto* console_layout = new QHBoxLayout(console_box);
-        auto* docked = new QRadioButton(tr("Docked"), console_box);
-        auto* handheld = new QRadioButton(tr("Handheld"), console_box);
-        console_layout->addWidget(docked);
-        console_layout->addWidget(handheld);
+        auto* console_group = new QButtonGroup(console_box);
+        console_layout->addWidget(ConfigurePlayerAssignment::MakeSegmented(
+            console_box, {tr("Docked"), tr("Handheld")}, {0, 1}, console_group));
         console_layout->addStretch(1);
+        auto* docked = console_group->button(0);
+        auto* handheld = console_group->button(1);
         assignment->AddTopWidget(console_box);
         const auto mirror = [this, docked, handheld] {
             docked->setChecked(ui->radioDocked->isChecked());
@@ -190,8 +192,9 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
         };
         connect(ui->radioDocked, &QRadioButton::toggled, this, mirror);
         connect(ui->radioUndocked, &QRadioButton::toggled, this, mirror);
-        connect(docked, &QRadioButton::clicked, this, [this] { ui->radioDocked->setChecked(true); });
-        connect(handheld, &QRadioButton::clicked, this,
+        connect(docked, &QAbstractButton::clicked, this,
+                [this] { ui->radioDocked->setChecked(true); });
+        connect(handheld, &QAbstractButton::clicked, this,
                 [this] { ui->radioUndocked->setChecked(true); });
         mirror_console_mode = mirror;
         mirror();

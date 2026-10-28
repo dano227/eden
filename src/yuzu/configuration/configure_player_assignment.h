@@ -11,6 +11,7 @@
 #include <QString>
 #include <QWidget>
 
+class QAbstractButton;
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
@@ -39,6 +40,10 @@ public:
     /// Puts a widget above everything else in the tab
     void AddTopWidget(QWidget* widget);
 
+    /// A row of joined buttons, one checked at a time (the group gets them, with these ids)
+    static QWidget* MakeSegmented(QWidget* parent, const QStringList& labels,
+                                  const std::vector<int>& ids, QButtonGroup* group);
+
 private:
     void LoadConfiguration();
     /// The controller applet mode the controls select
@@ -63,9 +68,10 @@ private:
     QButtonGroup* handheld_group = nullptr;
     bool legacy_applet = false;
     QLabel* mode_info = nullptr;
-    QCheckBox* overlay_toggle = nullptr;
+    QWidget* display_box = nullptr;
+    QAbstractButton* overlay_toggle = nullptr;
     bool original_overlay = false;
-    QCheckBox* hints_toggle = nullptr;
+    QAbstractButton* hints_toggle = nullptr;
     bool original_hints = true;
     QWidget* now_box = nullptr;
 
