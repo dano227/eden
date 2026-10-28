@@ -437,6 +437,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
 
     SetDefaultUIGeometry();
     RestoreUIState();
+    FitToScreenUnderGamescope(this);
 
     ConnectMenuEvents();
     ConnectWidgetEvents();
@@ -5681,6 +5682,7 @@ void MainWindow::HideFullscreen() {
 
         statusBar()->setVisible(ui->action_Show_Status_Bar->isChecked());
         ui->menubar->show();
+        FitToScreenUnderGamescope(this);
     } else {
         if (UsingExclusiveFullscreen()) {
             render_window->showNormal();
@@ -5692,6 +5694,23 @@ void MainWindow::HideFullscreen() {
             render_window->raise();
             render_window->show();
         }
+    }
+}
+
+void MainWindow::FitToScreenUnderGamescope(QWidget* window) {
+    // Under gamescope (Steam's Game Mode) a window is scaled to fit the screen together with
+    // any tooltip or popup reaching past it, so a window smaller than the screen grows and
+    // shrinks as they come and go. Filling the screen keeps them inside it.
+    if (!qEnvironmentVariableIsSet("GAMESCOPE_WAYLAND_DISPLAY") &&
+        qgetenv("XDG_CURRENT_DESKTOP") != "gamescope") {
+        return;
+    }
+    if (window->isFullScreen()) {
+        return;
+    }
+    QScreen* screen = window->screen() ? window->screen() : QGuiApplication::primaryScreen();
+    if (screen) {
+        window->setGeometry(screen->geometry());
     }
 }
 
@@ -5830,6 +5849,7 @@ void MainWindow::OnConfigure() {
     connect(&configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,
             &MainWindow::OnGameListRefresh);
 
+    FitToScreenUnderGamescope(&configure_dialog);
     const auto result = configure_dialog.exec();
     if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&
         !UISettings::values.reset_to_defaults) {

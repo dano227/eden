@@ -627,6 +627,8 @@ private:
     std::set<u32> overlay_active_pads;
     /// Polls controller input faster than the assignment tick, for the blue highlight
     QTimer console_activity_timer;
+    /// Under gamescope, makes a window fill the screen (see the definition)
+    void FitToScreenUnderGamescope(QWidget* window);
     void RenderControllerOverlay();
     void PollControllerActivity();
     /// The last buttons each player pressed (emulated, as the game sees them), newest last,
