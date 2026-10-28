@@ -961,11 +961,16 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
         setStyleSheet(
             locked ? QStringLiteral(
                          "QGroupBox { border: 1px solid palette(mid); border-radius: 8px; "
-                         "margin-top: 1.1em; background: palette(alternate-base); }"
+                         "margin-top: 1.1em; padding-bottom: 5px; "
+                         "background: palette(alternate-base); }"
                          "QGroupBox::title { subcontrol-origin: margin; left: 8px; "
                          "padding: 0 3px; font-weight: bold; }"
-                         "QGroupBox QGroupBox { border: none; background: transparent; }"
+                         "QGroupBox QGroupBox { border: none; background: transparent; "
+                         "padding-bottom: 0px; }"
                          "QGroupBox QGroupBox::title { font-weight: normal; }"
+                         // As before: centred over its button, where it fits
+                         "QGroupBox#mousePanningGroup::title { subcontrol-position: top center; "
+                         "left: 0px; padding: 0px; }"
                          "QPushButton { border: 1px solid palette(mid); border-radius: 6px; "
                          "padding: 2px 6px; background: palette(base); }"
                          "QPushButton:hover { border-color: palette(highlight); }"
@@ -973,6 +978,9 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                          "background: palette(highlight); color: palette(highlighted-text); }") +
                          ConfigurePlayerAssignment::ModernComboStyle()
                    : QString{});
+        if (locked) {
+            ConfigurePlayerAssignment::ModernizeCombos(this);
+        }
     }
     if (!profile_card && locked) {
         BuildProfileCard();
@@ -1066,6 +1074,7 @@ void ConfigureInputPlayer::BuildProfileCard() {
     auto* row = new QHBoxLayout;
     card_profiles = new QComboBox(profile_card);
     card_profiles->setPlaceholderText(tr("No profile"));
+    ConfigurePlayerAssignment::ModernizeCombos(profile_card);
     card_profiles->setMinimumWidth(160);
     card_profiles->setToolTip(tr("Picking a profile applies it to this player at once."));
     card_save = new QPushButton(tr("Save"), profile_card);

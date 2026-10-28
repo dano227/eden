@@ -28,6 +28,7 @@
 #include <QDir>
 #include <QRadioButton>
 #include <QScrollArea>
+#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -199,7 +200,24 @@ QString ConfigurePlayerAssignment::ModernComboStyle() {
         "QComboBox { border: 1px solid palette(mid); border-radius: 6px; padding: 3px 10px; "
         "background: palette(base); }"
         "QComboBox:hover, QComboBox:focus { border-color: palette(highlight); }"
-        "QComboBox:disabled { color: palette(mid); }");
+        "QComboBox:disabled { color: palette(mid); }"
+        // The open list: readable rows, the hovered one in the highlight colour
+        "QComboBox QAbstractItemView { background: palette(base); color: palette(text); "
+        "border: 1px solid palette(mid); outline: 0; padding: 2px; }"
+        "QComboBox QAbstractItemView::item { min-height: 24px; padding: 0 8px; }"
+        "QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected { "
+        "background: palette(highlight); color: palette(highlighted-text); }");
+}
+
+void ConfigurePlayerAssignment::ModernizeCombos(QWidget* root) {
+    // A combo box's own list painter ignores the style sheet and paints the hovered row white:
+    // the standard painter follows it
+    for (auto* combo : root->findChildren<QComboBox*>()) {
+        if (!combo->property("modern_list").toBool()) {
+            combo->setItemDelegate(new QStyledItemDelegate(combo));
+            combo->setProperty("modern_list", true);
+        }
+    }
 }
 
 QString ConfigurePlayerAssignment::OutlinedButtonStyle() {
@@ -850,6 +868,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                                  "for this session and do not change your saved controls."));
     }
     players_box->setVisible(in_effect && engine_active);
+    ModernizeCombos(this);
 }
 
 void ConfigurePlayerAssignment::OnBuiltinPicked(int index) {
