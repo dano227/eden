@@ -203,6 +203,7 @@ private:
     QGroupBox* profile_card{};
     QComboBox* card_profiles{};
     QPushButton* card_save{};
+    QToolButton* card_remove{};
     QToolButton* card_more{};
     QLabel* card_status{};
     QTimer* card_timer{};

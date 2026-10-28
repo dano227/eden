@@ -542,6 +542,18 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                         }
                     });
             line->addWidget(profile);
+            // The quick way to take the profile off (as "No profile")
+            auto* remove = new QPushButton(QStringLiteral("\u2715"), row);
+            remove->setToolTip(tr("Remove the profile from P%1").arg(player + 1));
+            remove->setFixedWidth(remove->sizeHint().height());
+            remove->setVisible(!entry.profile.empty());
+            remove->setEnabled(live);
+            connect(remove, &QPushButton::clicked, this, [player] {
+                auto& console = Common::GetControllerConsoleState();
+                std::scoped_lock lock{console.mutex};
+                console.profile_requests.push_back({player, {}, true});
+            });
+            line->addWidget(remove);
 
             auto* up = new QPushButton(QStringLiteral("\u25B2"), row);
             up->setToolTip(tr("Swap with P%1").arg(player));

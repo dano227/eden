@@ -1014,10 +1014,10 @@ std::string MappingKey(const std::string& raw) {
 
 /// Asks the controller assignment engine to put a profile on a player's controller ("" only
 /// drops the name): it owns the mappings while players are assigned automatically
-void RequestProfile(std::size_t player, const QString& name) {
+void RequestProfile(std::size_t player, const QString& name, bool restore = false) {
     auto& state = Common::GetControllerConsoleState();
     std::scoped_lock lock{state.mutex};
-    state.profile_requests.push_back({static_cast<int>(player), name.toStdString()});
+    state.profile_requests.push_back({static_cast<int>(player), name.toStdString(), restore});
 }
 
 /// The box layout that holds a widget, searched from a top layout down
@@ -1056,7 +1056,13 @@ void ConfigureInputPlayer::BuildProfileCard() {
     // A plain button the size of Save, without the arrow a menu button gets
     card_more->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; }"));
     card_more->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
+    // Takes the profile off this player: its mappings from before the profile come back
+    card_remove = new QToolButton(profile_card);
+    card_remove->setText(QStringLiteral("\u2715"));
+    card_remove->setToolTip(tr("Remove the profile from this player"));
+    card_remove->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
     row->addWidget(card_profiles, 1);
+    row->addWidget(card_remove);
     row->addWidget(card_save);
     row->addWidget(card_more);
     column->addLayout(row);
@@ -1104,6 +1110,12 @@ void ConfigureInputPlayer::BuildProfileCard() {
     connect(card_profiles, qOverload<int>(&QComboBox::activated), this, [this](int index) {
         ui->comboProfiles->setCurrentIndex(index);
         RequestProfile(player_index, ui->comboProfiles->currentText());
+        RememberProfileMapping();
+        UpdateProfileCard();
+    });
+    connect(card_remove, &QToolButton::clicked, this, [this] {
+        RequestProfile(player_index, {}, true);
+        ui->comboProfiles->setCurrentIndex(-1);
         RememberProfileMapping();
         UpdateProfileCard();
     });
@@ -1166,6 +1178,7 @@ void ConfigureInputPlayer::UpdateProfileCard() {
     }
 
     const QString follows = tr("Applies to this player's controller, whichever one it is.");
+    card_remove->setVisible(ui->comboProfiles->currentIndex() >= 0);
     if (ui->comboProfiles->currentIndex() < 0) {
         card_save->setText(tr("Save..."));
         card_save->setToolTip(tr("Keep this mapping as a new profile"));
