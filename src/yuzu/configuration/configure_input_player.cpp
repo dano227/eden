@@ -1044,7 +1044,9 @@ void ConfigureInputPlayer::BuildProfileCard() {
     card_more->setText(QStringLiteral("\u22ef"));
     card_more->setToolTip(tr("More profile actions"));
     card_more->setPopupMode(QToolButton::InstantPopup);
-    card_more->setAutoRaise(true);
+    // A plain button the size of Save, without the arrow a menu button gets
+    card_more->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; }"));
+    card_more->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
     row->addWidget(card_profiles, 1);
     row->addWidget(card_save);
     row->addWidget(card_more);
@@ -1169,6 +1171,9 @@ std::string ConfigureInputPlayer::CurrentMappingKey() const {
 
 void ConfigureInputPlayer::RememberProfileMapping() {
     card_profile_name = ui->comboProfiles->currentText();
+    // The player keeps its profile's name, so the card shows it the next time too
+    Settings::values.players.GetValue()[player_index].profile_name =
+        ui->comboProfiles->currentIndex() < 0 ? std::string{} : card_profile_name.toStdString();
     card_profile_key.clear();
     if (ui->comboProfiles->currentIndex() < 0) {
         return;

@@ -2029,6 +2029,11 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
             }
         }
         edited = MergeMappings(p.motions, b.motions, edited_motions) || edited;
+        // The profile picked in the player's tab (its name, for the tab to show it again)
+        if (a.profile_name != b.profile_name) {
+            p.profile_name = a.profile_name;
+            edited = true;
+        }
         if (a.controller_type != b.controller_type || a.vibration_enabled != b.vibration_enabled ||
             a.vibration_strength != b.vibration_strength) {
             p.controller_type = a.controller_type;
