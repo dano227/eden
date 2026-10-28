@@ -58,6 +58,22 @@ public:
                            const QWidget* widget) const override;
 };
 
+/// Under Eden's dark themes their style sheet draws the tabs, never PlayerTabStyle: this layer
+/// over the tab bar paints the player tabs' bubbles instead (under the tab buttons, which stay
+/// usable)
+class PlayerTabOverlay : public QWidget {
+public:
+    PlayerTabOverlay(QTabBar* bar, QColor background);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    QTabBar* bar;
+    /// The theme's own background, which covers its tab under the bubble
+    QColor background;
+};
+
 class ConfigureInput : public QWidget {
     Q_OBJECT
 
@@ -118,6 +134,7 @@ private:
     QTabWidget* drag_tabs = nullptr;
     /// The tab bar drawn with PlayerTabStyle (its player tabs as bubbles)
     QPointer<QTabBar> pill_bar;
+    QPointer<PlayerTabOverlay> tab_overlay;
     QList<QWidget*> tab_order;
     QWidget* dragged_tab = nullptr;
     bool tab_dragging = false;

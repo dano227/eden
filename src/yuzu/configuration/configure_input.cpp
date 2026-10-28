@@ -37,6 +37,7 @@
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QTabBar>
+#include <QCursor>
 #include <QApplication>
 #include <QPainter>
 #include <QStyleOptionTab>
@@ -316,6 +317,24 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             if (bar->styleSheet() != steady) {
                 bar->setStyleSheet(steady);
             }
+            // The dark themes' style sheet draws the tabs itself: the bubbles are painted over it
+            const bool painted = pills && UISettings::IsDarkTheme();
+            if (painted) {
+                if (!tab_overlay || tab_overlay->parentWidget() != bar) {
+                    delete tab_overlay;
+                    tab_overlay = new PlayerTabOverlay(
+                        bar, QString::fromStdString(UISettings::values.theme)
+                                     .contains(QStringLiteral("midnight"))
+                                 ? QColor(0x19, 0x23, 0x2D)
+                                 : QColor(0x31, 0x36, 0x3B));
+                }
+                tab_overlay->setGeometry(bar->rect());
+                tab_overlay->lower();
+                tab_overlay->show();
+                tab_overlay->update();
+            } else if (tab_overlay) {
+                tab_overlay->hide();
+            }
             // A player tab's colour is what makes it a bubble: none outside these modes
             for (std::size_t i = 0; i < player_tabs.size(); ++i) {
                 if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
@@ -523,6 +542,59 @@ QSize PlayerTabStyle::sizeFromContents(ContentsType type, const QStyleOption* op
     return result;
 }
 
+PlayerTabOverlay::PlayerTabOverlay(QTabBar* bar_, QColor background_)
+    : QWidget(bar_), bar{bar_}, background{background_} {
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setAttribute(Qt::WA_NoSystemBackground);
+    // The dark themes give a plain widget a solid background, which would cover the tab bar
+    setStyleSheet(QStringLiteral("background: transparent;"));
+}
+
+void PlayerTabOverlay::paintEvent(QPaintEvent*) {
+    QPainter painter{this};
+    painter.setRenderHint(QPainter::Antialiasing);
+    const int hovered = bar->underMouse() ? bar->tabAt(bar->mapFromGlobal(QCursor::pos())) : -1;
+    for (int i = 0; i < bar->count(); ++i) {
+        const QVariant data = bar->tabData(i);
+        if (data.metaType() != QMetaType::fromType<QColor>() || !bar->isTabVisible(i)) {
+            continue;
+        }
+        const QColor accent = data.value<QColor>();
+        const bool selected = i == bar->currentIndex();
+        const QRect tab = bar->tabRect(i);
+        // The theme's tab goes under the theme's background, and the bubble goes on top
+        painter.fillRect(tab, background);
+        const QRectF pill = QRectF(tab).adjusted(2, 3, -2, -3);
+        if (selected) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(accent);
+        } else {
+            QColor edge = accent;
+            edge.setAlpha(170);
+            painter.setPen(QPen(edge, 1.5));
+            QColor fill = accent;
+            fill.setAlpha(i == hovered ? 45 : 0);
+            painter.setBrush(fill);
+        }
+        painter.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2);
+        // The label, between the tab's arrows; a flash colours it as on the tabs it covers
+        QRect text = tab;
+        if (const QWidget* left = bar->tabButton(i, QTabBar::LeftSide)) {
+            text.setLeft(left->geometry().right() + 1);
+        }
+        if (const QWidget* right = bar->tabButton(i, QTabBar::RightSide)) {
+            text.setRight(right->geometry().left() - 1);
+        }
+        QFont font = bar->font();
+        font.setBold(selected);
+        painter.setFont(font);
+        const QColor flash = bar->tabTextColor(i);
+        painter.setPen(selected ? QColor(Qt::white)
+                                : (flash.isValid() ? flash : QColor(0xEF, 0xF0, 0xF1)));
+        painter.drawText(text, Qt::AlignCenter, bar->tabText(i));
+    }
+}
+
 void ConfigureInput::SwapPlayers(int a, int b) {
     if (a == b || a < 0 || b < 0 || a >= 8 || b >= 8) {
         return;
@@ -650,7 +722,8 @@ void ConfigureInput::UpdateTabArrows() {
                 // The size a style sheet reports is the size the tab makes room for (the dark
                 // themes say 12 pixels, and the tab text went under the buttons)
                 button->setStyleSheet(QStringLiteral("QToolButton { width: 16px; height: 16px; "
-                                                     "padding: 0px; }"));
+                                                     "padding: 0px; border: none; "
+                                                     "background: transparent; }"));
                 connect(button, &QToolButton::clicked, this, [this, player, step] {
                     SwapPlayers(player, player + step);
                     pending_select = player + step;
