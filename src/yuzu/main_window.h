@@ -624,6 +624,11 @@ private:
     /// them: the binding sets each pad carries come from here, the config file only ever
     /// sees this, and leaving the mode puts it back
     std::optional<std::array<Settings::PlayerInput, 10>> console_profile;
+    /// The running game's own players, when it was booted with input profiles of its own:
+    /// those players' sets come from here instead of the user's global ones
+    std::optional<std::array<Settings::PlayerInput, 10>> game_profiles;
+    /// The binding sets the pads carry: the user's own, with a game's input profiles on top
+    std::array<Settings::PlayerInput, 10> ConsoleBindingSets() const;
     /// Saves the configuration, writing the user's own players while a console mode runs
     void SaveAllConfigValues();
     /// Puts the user's own players back (leaving a console mode, or before the config is

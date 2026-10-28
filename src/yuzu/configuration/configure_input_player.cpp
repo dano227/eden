@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <QInputDialog>
 #include <QMenu>
@@ -288,6 +290,42 @@ QString ConfigureInputPlayer::AnalogToText(const Common::ParamPackage& param,
 
     return QObject::tr("[unknown]");
 }
+
+namespace {
+
+/// The SDL controller (guid, port) a player's bindings point at
+std::optional<std::pair<std::string, int>> SdlDevice(const Settings::PlayerInput& player) {
+    for (const std::string& raw : player.buttons) {
+        const Common::ParamPackage param{raw};
+        if (!raw.empty() && param.Get("engine", "") == "sdl") {
+            return std::pair<std::string, int>{param.Get("guid", ""), param.Get("port", 0)};
+        }
+    }
+    return std::nullopt;
+}
+
+/// Points a player's SDL bindings at one controller, leaving other engines alone
+void KeepSdlDevice(Settings::PlayerInput& player, const std::pair<std::string, int>& device) {
+    const auto keep = [&device](auto& params) {
+        for (std::string& raw : params) {
+            Common::ParamPackage param{raw};
+            if (raw.empty() || param.Get("engine", "") != "sdl") {
+                continue;
+            }
+            if (param.Has("guid2") && param.Get("guid2", "") == param.Get("guid", "")) {
+                param.Set("guid2", device.first);
+            }
+            param.Set("guid", device.first);
+            param.Set("port", device.second);
+            raw = param.Serialize();
+        }
+    };
+    keep(player.buttons);
+    keep(player.analogs);
+    keep(player.motions);
+}
+
+} // Anonymous namespace
 
 ConfigureInputPlayer::ConfigureInputPlayer(QWidget* parent, std::size_t player_index_,
                                            QWidget* bottom_row_,
@@ -907,6 +945,7 @@ void ConfigureInputPlayer::RefreshFromController() {
 }
 
 void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
+    connection_locked = locked;
     ui->devicesGroup->setVisible(!locked);
     // The automatic modes bind motion themselves (the controller's own, or its real device's)
     ui->buttonMotionLeftGroup->setVisible(!locked);
@@ -1655,12 +1694,20 @@ void ConfigureInputPlayer::LoadProfile() {
 
     ApplyConfiguration();
 
+    // While players are assigned automatically, the profile's mappings go onto the controller
+    // this player has now: the controller saved with the profile would read as a swap
+    auto& player = Settings::values.players.GetValue()[player_index];
+    const auto device = connection_locked ? SdlDevice(player) : std::nullopt;
+
     if (!profiles->LoadProfile(profile_name.toStdString(), player_index)) {
         QMessageBox::critical(this, tr("Load Input Profile"),
                               tr("Failed to load the input profile \"%1\"").arg(profile_name));
         UpdateInputProfiles();
         emit RefreshInputProfiles(player_index);
         return;
+    }
+    if (device) {
+        KeepSdlDevice(player, *device);
     }
 
     LoadConfiguration();

@@ -183,6 +183,8 @@ private:
     std::size_t player_index;
     bool debug;
     bool is_powered_on;
+    /// Players are assigned automatically: the connection and controller are not this tab's
+    bool connection_locked{};
 
     InputCommon::InputSubsystem* input_subsystem;
 

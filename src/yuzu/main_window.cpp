@@ -1735,6 +1735,12 @@ bool IsControllerMaker(Uint16 vendor) {
     }
 }
 
+/// Makers of handhelds with built-in controls: Valve, Lenovo, ASUS, MSI. A pad from one of
+/// them is taken as the handheld's own on a direct launch.
+bool IsHandheldMaker(Uint16 vendor) {
+    return vendor == 0x28DE || vendor == 0x17EF || vendor == 0x0B05 || vendor == 0x0DB0;
+}
+
 /// True for the controller types Steam reports for standalone controllers
 bool IsStandaloneControllerType(SDL_GamepadType type) {
     return type != SDL_GAMEPAD_TYPE_UNKNOWN && type != SDL_GAMEPAD_TYPE_STANDARD;
@@ -1859,9 +1865,22 @@ void MainWindow::RestoreConsoleProfile() {
     // keeps the engine's pre-boot state and that is what the next save writes.
     Settings::values.players.GetValue(true) = *console_profile;
     if (!Settings::values.players.UsingGlobal()) {
-        Settings::values.players.GetValue() = *console_profile;
+        Settings::values.players.GetValue() = ConsoleBindingSets();
     }
     console_profile.reset();
+    game_profiles.reset();
+}
+
+std::array<Settings::PlayerInput, 10> MainWindow::ConsoleBindingSets() const {
+    auto sets = *console_profile;
+    if (game_profiles) {
+        for (size_t i = 0; i < sets.size(); ++i) {
+            if (!(*game_profiles)[i].profile_name.empty()) {
+                sets[i] = (*game_profiles)[i];
+            }
+        }
+    }
+    return sets;
 }
 
 namespace {
@@ -2319,6 +2338,18 @@ void MainWindow::ApplyConsoleControllerMode() {
                     continue;
                 }
             }
+            // What a user's log needs for adding their handheld to the allowlist
+            static std::set<std::string> described;
+            if (described.insert(ident).second) {
+                const Uint16 vendor = SDL_GetJoystickVendorForID(id);
+                LOG_INFO(Frontend,
+                         "console-mode: device {:04x}:{:04x} name=\"{}\" type={} steam={} "
+                         "gyro={} handheld_maker={} controller_maker={} ident={}",
+                         vendor, SDL_GetJoystickProductForID(id), PadName(id).toStdString(),
+                         SDL_GetGamepadStringForType(SDL_GetGamepadTypeForID(id)),
+                         IsSteamVirtualPad(id), PadHasGyro(id), IsHandheldMaker(vendor),
+                         IsControllerMaker(vendor), ident);
+            }
             live[id] = std::move(ident);
         }
         SDL_free(ids);
@@ -2514,9 +2545,23 @@ void MainWindow::ApplyConsoleControllerMode() {
         // Entering a console mode: the user's own players are kept aside, and everything the
         // engine changes from here on stays runtime only (see SaveAllConfigValues)
         console_profile = Settings::values.players.GetValue(true);
+        game_profiles.reset();
         LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside "
                            "(PROBE P1 motions {})",
                  MotionTrace((*console_profile)[0]));
+    }
+    // A game booted with input profiles of its own: those players' sets are the profile's, read
+    // before the engine drives the game's copy (a game's copy is read in one go at boot)
+    if (Settings::values.players.UsingGlobal()) {
+        game_profiles.reset();
+    } else if (!game_profiles) {
+        game_profiles = Settings::values.players.GetValue();
+        for (size_t i = 0; i < game_profiles->size(); ++i) {
+            if (!(*game_profiles)[i].profile_name.empty()) {
+                LOG_INFO(Frontend, "console-mode: P{} uses the game's input profile \"{}\"",
+                         i + 1, (*game_profiles)[i].profile_name);
+            }
+        }
     }
     if (builtin_identity.empty()) {
         // Console Mode also needs to know the handheld's own pad: it carries player one's set
@@ -2752,8 +2797,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                         continue;
                     }
                     const Uint16 vendor = PadVendor(id);
-                    if (vendor == 0x28DE || vendor == 0x17EF || vendor == 0x0B05 ||
-                        vendor == 0x0DB0) {
+                    if (IsHandheldMaker(vendor)) {
                         makers.push_back(id);
                         // Valve also makes standalone controllers: the deck's own wins
                         if (vendor == 0x28DE && PadProduct(id) == 0x1205) {
@@ -2772,6 +2816,8 @@ void MainWindow::ApplyConsoleControllerMode() {
             // P1 and the externals P2.., and releasing the deck's P1 a tick later leaves P1
             // empty (deck log: "player 1 deactivated", externals on P2-P5)
             if (candidate) {
+                LOG_INFO(Frontend, "console-mode: handheld {:04x}:{:04x} detected by its maker",
+                         PadVendor(candidate), PadProduct(candidate));
                 builtin_pad_id = candidate;
                 builtin_identity = live[candidate];
                 builtin_seen_first = true;
@@ -2780,6 +2826,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 builtin_match_id = candidate;
                 builtin_valid = true;
             } else if (live.size() == 1 && !IsControllerMaker(PadVendor(live.begin()->first))) {
+                LOG_INFO(Frontend, "console-mode: handheld {:04x}:{:04x} assumed: the only pad",
+                         PadVendor(live.begin()->first), PadProduct(live.begin()->first));
                 builtin_match_id = live.begin()->first;
                 builtin_valid = true;
                 builtin_pad_id = live.begin()->first;
@@ -3080,7 +3128,7 @@ void MainWindow::ApplyConsoleControllerMode() {
     // SDL gyro when it has one and the set has no motion. A pad the driver has not opened
     // yet is retried next tick.
     if (input_subsystem && console_profile) {
-        const auto& profile = *console_profile;
+        const auto profile = ConsoleBindingSets();
         const auto is_handheld_motion = [&profile](const std::string& raw) {
             if (raw.empty() || Common::ParamPackage{raw}.Get("engine", "") == "sdl") {
                 return false;
