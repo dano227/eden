@@ -302,16 +302,17 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                 bar->setStyle(nullptr);
                 pill_bar = nullptr;
             }
-            // The Midnight Blue themes narrow a hovered tab, which then leaves the cursor, widens
-            // back under it and shakes: a hovered tab keeps its width (their 8 pixels of padding
-            // less the 1-pixel border they add)
+            // The Midnight Blue themes give a hovered tab a 1-pixel border on three sides and
+            // narrow its padding: the tab and the whole tab bar change size, the page below
+            // moves, and with the hover lost it moves back, shaking. A hovered tab keeps its
+            // size: their padding (8 at the sides, 2 on top) less that border. (Every page of
+            // the settings dialog shares this tab bar.)
             const bool midnight =
                 QString::fromStdString(UISettings::values.theme).contains(QStringLiteral("midnight"));
             const QString steady =
-                midnight && controls_page
-                    ? QStringLiteral("QTabBar::tab:top:!selected:hover { padding-left: 7px; "
-                                     "padding-right: 7px; }")
-                    : QString{};
+                midnight ? QStringLiteral("QTabBar::tab:top:!selected:hover { padding-left: 7px; "
+                                          "padding-right: 7px; padding-top: 1px; }")
+                         : QString{};
             if (bar->styleSheet() != steady) {
                 bar->setStyleSheet(steady);
             }
