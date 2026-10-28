@@ -194,6 +194,25 @@ private:
 
 } // Anonymous namespace
 
+QString ConfigurePlayerAssignment::ModernComboStyle() {
+    return QStringLiteral(
+        "QComboBox { border: 1px solid palette(mid); border-radius: 6px; padding: 3px 10px; "
+        "background: palette(base); }"
+        "QComboBox:hover, QComboBox:focus { border-color: palette(highlight); }"
+        "QComboBox:disabled { color: palette(mid); }");
+}
+
+QString ConfigurePlayerAssignment::OutlinedButtonStyle() {
+    return QStringLiteral(
+        "QPushButton, QToolButton { border: 1px solid palette(highlight); border-radius: 6px; "
+        "padding: 3px 12px; color: palette(highlight); font-weight: bold; "
+        "background: palette(base); }"
+        "QPushButton:hover, QToolButton:hover { background: palette(highlight); "
+        "color: palette(highlighted-text); }"
+        "QPushButton:disabled, QToolButton:disabled { border-color: palette(mid); "
+        "color: palette(mid); }");
+}
+
 QWidget* ConfigurePlayerAssignment::MakeSegmented(QWidget* parent, const QStringList& labels,
                                                  const std::vector<int>& ids,
                                                  QButtonGroup* group) {
@@ -244,13 +263,15 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     outer->addWidget(scroll);
     auto* layout = new QVBoxLayout(content);
     content_layout = layout;
-    layout->setSpacing(12);
-    // Each section is a rounded card with its title on the edge
+    layout->setSpacing(8);
+    // Each section is a rounded card with its title on the edge; drop-downs are rounded fields
+    // (kept tight: the Deck's screen is 800 pixels tall)
     setStyleSheet(QStringLiteral(
-        "QGroupBox { border: 1px solid palette(mid); border-radius: 10px; margin-top: 12px; "
-        "padding: 12px 10px 8px 10px; background: palette(alternate-base); }"
+        "QGroupBox { border: 1px solid palette(mid); border-radius: 10px; margin-top: 10px; "
+        "padding: 8px 8px 4px 8px; background: palette(alternate-base); }"
         "QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 4px; "
-        "font-weight: bold; }"));
+        "font-weight: bold; }") +
+                  ModernComboStyle());
 
     // The controller applet's mode, as a segmented control: Manual (players set by hand),
     // Modern Console (automatic) and Real Hardware (the console's own applet)
@@ -310,6 +331,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     builtin_picker->addItem(tr("Auto-detect"), QString{});
     picker_row->addWidget(builtin_picker, 1);
     builtin_identify = new QPushButton(tr("Identify"), builtin_row);
+    builtin_identify->setCursor(Qt::PointingHandCursor);
+    builtin_identify->setStyleSheet(OutlinedButtonStyle());
     picker_row->addWidget(builtin_identify);
     builtin_layout->addLayout(picker_row);
     builtin_status = new QLabel(builtin_row);
@@ -458,10 +481,8 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
                               "to the next available player when it connects."));
         break;
     case Settings::AppletMode::HandheldConsoleMode:
-        mode_info->setText(tr("Controller assignment is automatic. For handhelds connected to a "
-                              "TV or monitor: connected controllers take priority, and the "
-                              "built-in controls are used only when no other controller is "
-                              "connected."));
+        mode_info->setText(tr("Controller assignment is automatic, with the handheld's own "
+                              "controls last."));
         break;
     case Settings::AppletMode::Disabled:
         mode_info->setText(tr("Controllers are assigned in each player's tab. Games use the "
@@ -727,13 +748,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
 
             // Swap and Config stand out: outlined in the highlight colour, filled on hover (and
             // Swap filled while it waits for the second player)
-            const QString outlined = QStringLiteral(
-                "QToolButton { border: 1px solid palette(highlight); border-radius: 6px; "
-                "padding: 3px 12px; color: palette(highlight); font-weight: bold; "
-                "background: palette(base); }"
-                "QToolButton:hover { background: palette(highlight); "
-                "color: palette(highlighted-text); }"
-                "QToolButton:disabled { border-color: palette(mid); color: palette(mid); }");
+            const QString outlined = OutlinedButtonStyle();
             const QString filled = QStringLiteral(
                 "QToolButton { border: 1px solid palette(highlight); border-radius: 6px; "
                 "padding: 3px 12px; background: palette(highlight); "

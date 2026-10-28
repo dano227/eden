@@ -41,6 +41,10 @@ public:
     void AddTopWidget(QWidget* widget);
 
     /// A row of joined buttons, one checked at a time (the group gets them, with these ids)
+    /// Rounded fields and outlined buttons, as the Controllers tab draws them
+    static QString ModernComboStyle();
+    static QString OutlinedButtonStyle();
+
     static QWidget* MakeSegmented(QWidget* parent, const QStringList& labels,
                                   const std::vector<int>& ids, QButtonGroup* group);
 

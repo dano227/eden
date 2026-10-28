@@ -188,6 +188,7 @@ private:
     bool is_powered_on;
     /// Players are assigned automatically: the connection and controller are not this tab's
     bool connection_locked{};
+    bool style_applied{};
 
     /// The profile card shown instead of the Profile group while players are assigned
     /// automatically. It drives the same profile list (comboProfiles stays the selection).

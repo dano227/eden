@@ -32,6 +32,7 @@
 #include "ui_configure_input_player.h"
 #include "yuzu/bootmanager.h"
 #include "yuzu/configuration/configure_input_player.h"
+#include "yuzu/configuration/configure_player_assignment.h"
 #include "yuzu/configuration/configure_input_player_widget.h"
 #include "yuzu/configuration/configure_mouse_panning.h"
 #include "yuzu/configuration/input_profiles.h"
@@ -951,7 +952,28 @@ void ConfigureInputPlayer::RefreshFromController() {
 }
 
 void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
+    const bool changed = connection_locked != locked || !style_applied;
     connection_locked = locked;
+    style_applied = true;
+    // The automatic modes draw the tab like the Controllers tab: rounded cards and fields, with
+    // the same spacing as before (the page fills the Deck's screen exactly)
+    if (changed) {
+        setStyleSheet(
+            locked ? QStringLiteral(
+                         "QGroupBox { border: 1px solid palette(mid); border-radius: 8px; "
+                         "margin-top: 1.1em; background: palette(alternate-base); }"
+                         "QGroupBox::title { subcontrol-origin: margin; left: 8px; "
+                         "padding: 0 3px; font-weight: bold; }"
+                         "QGroupBox QGroupBox { border: none; background: transparent; }"
+                         "QGroupBox QGroupBox::title { font-weight: normal; }"
+                         "QPushButton { border: 1px solid palette(mid); border-radius: 6px; "
+                         "padding: 2px 6px; background: palette(base); }"
+                         "QPushButton:hover { border-color: palette(highlight); }"
+                         "QPushButton:pressed, QPushButton:checked { "
+                         "background: palette(highlight); color: palette(highlighted-text); }") +
+                         ConfigurePlayerAssignment::ModernComboStyle()
+                   : QString{});
+    }
     if (!profile_card && locked) {
         BuildProfileCard();
     }
