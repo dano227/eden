@@ -2342,11 +2342,13 @@ void MainWindow::ApplyConsoleControllerMode() {
             static std::set<std::string> described;
             if (described.insert(ident).second) {
                 const Uint16 vendor = SDL_GetJoystickVendorForID(id);
+                // (SDL has no name for an unknown type: null, which fmt refuses)
+                const char* type = SDL_GetGamepadStringForType(SDL_GetGamepadTypeForID(id));
                 LOG_INFO(Frontend,
                          "console-mode: device {:04x}:{:04x} name=\"{}\" type={} steam={} "
                          "gyro={} handheld_maker={} controller_maker={} ident={}",
                          vendor, SDL_GetJoystickProductForID(id), PadName(id).toStdString(),
-                         SDL_GetGamepadStringForType(SDL_GetGamepadTypeForID(id)),
+                         type ? type : "unknown",
                          IsSteamVirtualPad(id), PadHasGyro(id), IsHandheldMaker(vendor),
                          IsControllerMaker(vendor), ident);
             }
