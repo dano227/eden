@@ -15,6 +15,7 @@
 #include <QKeyEvent>
 #include <QList>
 #include <QPointer>
+#include <QProxyStyle>
 #include <QToolButton>
 #include <QWidget>
 
@@ -44,6 +45,17 @@ class ConfigureInput;
 }
 
 void OnDockedModeChanged(bool last_state, bool new_state, Core::System& system);
+
+/// The settings dialog's tab bar in the automatic modes: pill-shaped tabs, each player's in
+/// its colour (the tab's data), the selected one filled
+class PlayerTabStyle : public QProxyStyle {
+public:
+    explicit PlayerTabStyle(const QString& base);
+    void drawControl(ControlElement element, const QStyleOption* option, QPainter* painter,
+                     const QWidget* widget) const override;
+    QSize sizeFromContents(ContentsType type, const QStyleOption* option, const QSize& size,
+                           const QWidget* widget) const override;
+};
 
 class ConfigureInput : public QWidget {
     Q_OBJECT

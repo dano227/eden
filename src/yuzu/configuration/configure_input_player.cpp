@@ -1024,7 +1024,13 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
             QFont bold = normal;
             bold.setBold(true);
             for (QGroupBox* box : findChildren<QGroupBox*>()) {
-                const bool section = qobject_cast<QGroupBox*>(box->parentWidget()) == nullptr &&
+                // A section has no box around it (a button's label box may sit in a plain
+                // widget inside one)
+                bool inside_box = false;
+                for (QWidget* up = box->parentWidget(); up && up != this; up = up->parentWidget()) {
+                    inside_box = inside_box || qobject_cast<QGroupBox*>(up) != nullptr;
+                }
+                const bool section = !inside_box &&
                                      !box->objectName().startsWith(QStringLiteral("buttonMisc")) &&
                                      !box->objectName().startsWith(
                                          QStringLiteral("buttonShoulderButtons"));
@@ -1041,6 +1047,7 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
             // a stretch on the right to balance it
             if (!home_centred) {
                 home_centred = true;
+                ui->miscButtons->setStretch(0, 1);
                 ui->miscButtons->addStretch(1);
             }
             // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their

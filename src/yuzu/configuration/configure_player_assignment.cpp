@@ -195,6 +195,10 @@ private:
 
 } // Anonymous namespace
 
+QColor ConfigurePlayerAssignment::PlayerColor(int player) {
+    return PlayerColors[static_cast<std::size_t>(player) % PlayerColors.size()];
+}
+
 QString ConfigurePlayerAssignment::ModernComboStyle() {
     return QStringLiteral(
         "QComboBox { border: 1px solid palette(mid); border-radius: 6px; padding: 3px 10px; "

@@ -36,6 +36,10 @@
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QTabBar>
+#include <QApplication>
+#include <QPainter>
+#include <QStyleOptionTab>
+#include <QProxyStyle>
 #include <QDateTime>
 #include <QEvent>
 #include <QMouseEvent>
@@ -283,12 +287,26 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
         if (tabs) {
             const bool controls_page = tabs->indexOf(player_tabs[0]) >= 0;
             tabs->setMovable(automatic && engine_active && controls_page);
-            const QString tab_style = automatic && controls_page
-                                          ? QStringLiteral("QTabBar::tab:selected { "
-                                                           "font-weight: bold; }")
-                                          : QString{};
-            if (tabs->tabBar()->styleSheet() != tab_style) {
-                tabs->tabBar()->setStyleSheet(tab_style);
+            // Pill tabs in the players' colours, the selected one filled (the tab bar is the
+            // settings dialog's, shared with the other pages: only on this page, in these modes)
+            QTabBar* bar = tabs->tabBar();
+            const bool pills = automatic && controls_page;
+            // (No RTTI here: the style is known by its name)
+            const bool styled = bar->style()->objectName() == QStringLiteral("PlayerTabStyle");
+            if (pills && !styled) {
+                auto* style = new PlayerTabStyle(QApplication::style()->name());
+                style->setParent(bar);
+                bar->setStyle(style);
+            } else if (!pills && styled) {
+                bar->setStyle(nullptr);
+            }
+            if (pills) {
+                for (std::size_t i = 0; i < player_tabs.size(); ++i) {
+                    if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
+                        bar->setTabData(index, ConfigurePlayerAssignment::PlayerColor(
+                                                   static_cast<int>(i)));
+                    }
+                }
             }
             if (tabs != drag_tabs) {
                 drag_tabs = tabs;
@@ -417,6 +435,68 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
     if (reconnect_current) {
         connected_controller_checkboxes[player_index]->setCheckState(Qt::Checked);
     }
+}
+
+PlayerTabStyle::PlayerTabStyle(const QString& base) : QProxyStyle(base) {
+    setObjectName(QStringLiteral("PlayerTabStyle"));
+}
+
+void PlayerTabStyle::drawControl(ControlElement element, const QStyleOption* option,
+                                 QPainter* painter, const QWidget* widget) const {
+    const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option);
+    const auto* bar = qobject_cast<const QTabBar*>(widget);
+    if (!tab || !bar || (element != CE_TabBarTabShape && element != CE_TabBarTabLabel)) {
+        QProxyStyle::drawControl(element, option, painter, widget);
+        return;
+    }
+    // A player tab carries its player's colour; the others take the highlight
+    const int index = bar->tabAt(tab->rect.center());
+    const QVariant data = index >= 0 ? bar->tabData(index) : QVariant{};
+    const QColor accent = data.metaType() == QMetaType::fromType<QColor>()
+                              ? data.value<QColor>()
+                              : tab->palette.highlight().color();
+    const bool selected = tab->state & State_Selected;
+    if (element == CE_TabBarTabShape) {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        const QRectF pill = QRectF(tab->rect).adjusted(2, 3, -2, -3);
+        if (selected) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(accent);
+        } else {
+            QColor edge = accent;
+            edge.setAlpha(170);
+            painter->setPen(QPen(edge, 1.5));
+            QColor fill = accent;
+            fill.setAlpha(tab->state & State_MouseOver ? 45 : 0);
+            painter->setBrush(fill);
+        }
+        painter->drawRoundedRect(pill, pill.height() / 2, pill.height() / 2);
+        painter->restore();
+        return;
+    }
+    // The label: white and bold on the filled tab
+    QStyleOptionTab label{*tab};
+    if (selected) {
+        label.palette.setColor(QPalette::WindowText, Qt::white);
+        label.palette.setColor(QPalette::ButtonText, Qt::white);
+    }
+    painter->save();
+    QFont font = painter->font();
+    font.setBold(selected);
+    painter->setFont(font);
+    QProxyStyle::drawControl(element, &label, painter, widget);
+    painter->restore();
+}
+
+QSize PlayerTabStyle::sizeFromContents(ContentsType type, const QStyleOption* option,
+                                       const QSize& size, const QWidget* widget) const {
+    QSize result = QProxyStyle::sizeFromContents(type, option, size, widget);
+    if (type == CT_TabBarTab) {
+        // Room for the rounded ends and the bold label
+        result += QSize(14, 4);
+    }
+    return result;
 }
 
 void ConfigureInput::SwapPlayers(int a, int b) {
