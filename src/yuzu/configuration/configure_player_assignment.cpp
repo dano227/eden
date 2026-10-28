@@ -568,7 +568,8 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
                               .count();
         builtin_status->setText(tr("Waiting for a button press (%1 seconds)...")
                                     .arg(std::max<qint64>(0, left)));
-        builtin_identify->setText(tr("Press a button on the handheld's pad..."));
+        // (The line below counts down)
+        builtin_identify->setText(tr("Press a button..."));
         return;
     }
     builtin_identify->setText(tr("Identify"));

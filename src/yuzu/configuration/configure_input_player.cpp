@@ -967,10 +967,19 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                          "padding: 0 3px; font-weight: bold; }"
                          "QGroupBox QGroupBox { border: none; background: transparent; "
                          "padding-bottom: 0px; }"
-                         "QGroupBox QGroupBox::title { font-weight: normal; }"
-                         // As before: centred over its button, where it fits
-                         "QGroupBox#mousePanningGroup::title { subcontrol-position: top center; "
-                         "left: 0px; padding: 0px; }"
+                         // The label above a button is centred over it, in the cards and on
+                         // the single-button boxes
+                         "QGroupBox QGroupBox::title, "
+                         "QGroupBox#buttonShoulderButtonsButtonZLGroup::title, "
+                         "QGroupBox#buttonShoulderButtonsButtonLGroup::title, "
+                         "QGroupBox#buttonMiscButtonsMinusGroup::title, "
+                         "QGroupBox#buttonMiscButtonsPlusGroup::title, "
+                         "QGroupBox#buttonShoulderButtonsZRGroup::title, "
+                         "QGroupBox#buttonShoulderButtonsRGroup::title, "
+                         "QGroupBox#buttonMiscButtonsHomeGroup::title, "
+                         "QGroupBox#buttonMiscButtonsScreenshotGroup::title { "
+                         "subcontrol-position: top center; left: 0px; padding: 0px; "
+                         "font-weight: normal; }"
                          "QPushButton { border: 1px solid palette(mid); border-radius: 6px; "
                          "padding: 2px 6px; background: palette(base); }"
                          "QPushButton:hover { border-color: palette(highlight); }"
@@ -980,6 +989,14 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                    : QString{});
         if (locked) {
             ConfigurePlayerAssignment::ModernizeCombos(this);
+            // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
+            // trigger slider is below)
+            for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
+                                        ui->buttonPlus}) {
+                if (QWidget* box = button->parentWidget(); box && box->layout()) {
+                    box->layout()->setAlignment(button, Qt::AlignTop | Qt::AlignHCenter);
+                }
+            }
         }
     }
     if (!profile_card && locked) {
