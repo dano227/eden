@@ -978,6 +978,13 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                          "QGroupBox#buttonMiscButtonsHomeGroup, "
                          "QGroupBox#buttonMiscButtonsScreenshotGroup { margin-top: 0px; "
                          "padding-top: 1.3em; }"
+                         // The top row starts level with the section cards beside it
+                         "QGroupBox#buttonShoulderButtonsButtonZLGroup, "
+                         "QGroupBox#buttonShoulderButtonsButtonLGroup, "
+                         "QGroupBox#buttonMiscButtonsMinusGroup, "
+                         "QGroupBox#buttonMiscButtonsPlusGroup, "
+                         "QGroupBox#buttonShoulderButtonsZRGroup, "
+                         "QGroupBox#buttonShoulderButtonsRGroup { margin-top: 1.1em; }"
                          "QGroupBox#buttonShoulderButtonsButtonZLGroup::title, "
                          "QGroupBox#buttonShoulderButtonsButtonLGroup::title, "
                          "QGroupBox#buttonMiscButtonsMinusGroup::title, "
@@ -1013,6 +1020,7 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
             // The section titles are bold (a style sheet cannot bold only a title: the box's
             // font is bold and everything in it goes back to normal)
             QFont normal = font();
+            normal.setBold(false); // explicit, or the box's bold is inherited after all
             QFont bold = normal;
             bold.setBold(true);
             for (QGroupBox* box : findChildren<QGroupBox*>()) {
@@ -1028,6 +1036,12 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                     child->setFont(normal);
                 }
                 bolded_boxes.push_back(box);
+            }
+            // Home sits under the middle of the controller: the row's spacer on the left gets
+            // a stretch on the right to balance it
+            if (!home_centred) {
+                home_centred = true;
+                ui->miscButtons->addStretch(1);
             }
             // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
             // trigger slider is below)
@@ -1230,11 +1244,13 @@ void ConfigureInputPlayer::BuildProfileCard() {
         layout->insertWidget(layout->indexOf(ui->profilesGroup) + 1, profile_card, 1);
     }
     // A bold title like the other sections, with its contents in the normal font
-    QFont bold = font();
+    QFont normal = font();
+    normal.setBold(false); // explicit, or the card's bold is inherited after all
+    QFont bold = normal;
     bold.setBold(true);
     profile_card->setFont(bold);
     for (QWidget* child : profile_card->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-        child->setFont(font());
+        child->setFont(normal);
     }
     profile_card->setVisible(false);
 }

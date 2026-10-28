@@ -278,9 +278,18 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             }
             player_controllers[i]->SetConnectionLocked(automatic);
         }
-        // In the automatic modes the player tabs drag to change the player order
+        // In the automatic modes the player tabs drag to change the player order, and the
+        // selected tab reads bold
         if (tabs) {
-            tabs->setMovable(automatic && engine_active && tabs->indexOf(player_tabs[0]) >= 0);
+            const bool controls_page = tabs->indexOf(player_tabs[0]) >= 0;
+            tabs->setMovable(automatic && engine_active && controls_page);
+            const QString tab_style = automatic && controls_page
+                                          ? QStringLiteral("QTabBar::tab:selected { "
+                                                           "font-weight: bold; }")
+                                          : QString{};
+            if (tabs->tabBar()->styleSheet() != tab_style) {
+                tabs->tabBar()->setStyleSheet(tab_style);
+            }
             if (tabs != drag_tabs) {
                 drag_tabs = tabs;
                 tabs->tabBar()->installEventFilter(this);

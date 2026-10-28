@@ -639,6 +639,11 @@ private:
     };
     std::array<std::deque<ButtonPress>, 10> press_history{};
     std::array<std::bitset<32>, 10> buttons_down{};
+    /// Stick moves in the history: StickMoveButton + stick * 4 + direction (left, up, right,
+    /// down), stick 0 the left one
+    static constexpr int StickMoveButton = 64;
+    /// The direction each player's sticks point, plus one (0 at rest)
+    std::array<std::array<int, 2>, 10> stick_direction{};
     std::array<qint64, 10> press_history_since{};
     /// Reads the players' buttons; true when the history changed (a press, or one expiring)
     bool PollButtonHistory();

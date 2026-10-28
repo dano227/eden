@@ -3,6 +3,7 @@
 
 // Static Qt on macOS doesn't use Vulkan
 // Other platforms do, and thus have conflicting VulkanMemoryAllocator symbols
+#include <cmath>
 #include "core/launch_params.h"
 #if defined(QT_STATICPLUGIN) && !defined(__APPLE__)
 #undef VMA_IMPLEMENTATION
@@ -2309,9 +2310,18 @@ void MainWindow::RenderControllerOverlay() {
         return;
     }
 
-    // The Switch buttons as chips: a label and a colour
+    // The Switch buttons as chips: a label and a colour (stick moves: the stick and an arrow)
     const auto chip = [](int button) -> std::pair<QString, QColor> {
         using namespace Settings::NativeButton;
+        if (button >= StickMoveButton) {
+            static constexpr std::array<const char16_t*, 4> arrows{u"\u2190", u"\u2191",
+                                                                   u"\u2192", u"\u2193"};
+            const int stick = (button - StickMoveButton) / 4;
+            const int direction = (button - StickMoveButton) % 4;
+            return {(stick == 0 ? QStringLiteral("LS") : QStringLiteral("RS")) +
+                        QString::fromUtf16(arrows[static_cast<std::size_t>(direction)]),
+                    QColor(52, 73, 94)};
+        }
         switch (button) {
         case A:
             return {QStringLiteral("A"), QColor(231, 76, 60)};
@@ -2322,9 +2332,9 @@ void MainWindow::RenderControllerOverlay() {
         case Y:
             return {QStringLiteral("Y"), QColor(46, 184, 104)};
         case LStick:
-            return {QStringLiteral("LS"), QColor(70, 90, 112)};
+            return {QStringLiteral("L3"), QColor(70, 90, 112)};
         case RStick:
-            return {QStringLiteral("RS"), QColor(70, 90, 112)};
+            return {QStringLiteral("R3"), QColor(70, 90, 112)};
         case L:
             return {QStringLiteral("L"), QColor(120, 132, 140)};
         case R:
@@ -2558,6 +2568,27 @@ bool MainWindow::PollButtonHistory() {
         while (!history.empty() && now_ms - history.front().at > 5400) {
             history.pop_front();
             pressed = true;
+        }
+        // A stick counts when it leaves the middle, and again when it turns another way
+        const auto sticks = controller->GetSticksValues();
+        for (int s = 0; s < 2; ++s) {
+            const float x = sticks[static_cast<std::size_t>(s)].x.value;
+            const float y = sticks[static_cast<std::size_t>(s)].y.value;
+            const float reach = std::hypot(x, y);
+            auto& pointing = stick_direction[i][static_cast<std::size_t>(s)];
+            if (reach > 0.6f) {
+                const int direction = std::abs(x) > std::abs(y) ? (x < 0 ? 0 : 2) : (y > 0 ? 1 : 3);
+                if (direction + 1 != pointing) {
+                    pointing = direction + 1;
+                    history.push_back({StickMoveButton + s * 4 + direction, now_ms});
+                    if (history.size() > 10) {
+                        history.pop_front();
+                    }
+                    pressed = true;
+                }
+            } else if (reach < 0.3f) {
+                pointing = 0;
+            }
         }
         const auto values = controller->GetButtonsValues();
         auto& down = buttons_down[i];

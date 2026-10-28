@@ -190,6 +190,7 @@ private:
     /// Players are assigned automatically: the connection and controller are not this tab's
     bool connection_locked{};
     bool style_applied{};
+    bool home_centred{};
     /// The section boxes given a bold title in the automatic modes
     std::vector<QPointer<QGroupBox>> bolded_boxes;
 
