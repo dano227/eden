@@ -65,10 +65,12 @@ private:
     enum Handler { HandlerManual, HandlerModern, HandlerReal };
     QButtonGroup* handler_group = nullptr;
     QFrame* handheld_panel = nullptr;
-    QButtonGroup* handheld_group = nullptr;
+    QAbstractButton* handheld_switch = nullptr;
     bool legacy_applet = false;
     QLabel* mode_info = nullptr;
     QWidget* display_box = nullptr;
+    /// The scrolled page the cards stack in
+    QVBoxLayout* content_layout = nullptr;
     QAbstractButton* overlay_toggle = nullptr;
     bool original_overlay = false;
     QAbstractButton* hints_toggle = nullptr;

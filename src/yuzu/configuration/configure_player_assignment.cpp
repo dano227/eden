@@ -27,6 +27,7 @@
 #include <QCheckBox>
 #include <QDir>
 #include <QRadioButton>
+#include <QScrollArea>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -228,7 +229,21 @@ QWidget* ConfigurePlayerAssignment::MakeSegmented(QWidget* parent, const QString
 }
 
 ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(parent) {
-    auto* layout = new QVBoxLayout(this);
+    // The cards keep their natural height and the page scrolls when they do not fit (squeezed,
+    // a card clips its controls)
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    auto* scroll = new QScrollArea(this);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->viewport()->setAutoFillBackground(false);
+    auto* content = new QWidget(scroll);
+    content->setAutoFillBackground(false);
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
+    auto* layout = new QVBoxLayout(content);
+    content_layout = layout;
     layout->setSpacing(12);
     // Each section is a rounded card with its title on the edge
     setStyleSheet(QStringLiteral(
@@ -273,10 +288,9 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     panel_text->addWidget(panel_title);
     panel_text->addWidget(panel_note);
     panel_layout->addLayout(panel_text, 1);
-    handheld_group = new QButtonGroup(this);
-    panel_layout->addWidget(MakeSegmented(handheld_panel, {tr("Yes"), tr("No")}, {1, 0},
-                                      handheld_group),
-                            0, Qt::AlignVCenter);
+    handheld_switch = new ToggleSwitch(handheld_panel);
+    handheld_switch->setToolTip(tr("On: this is a handheld with its own controls"));
+    panel_layout->addWidget(handheld_switch, 0, Qt::AlignVCenter);
     auto* indent = new QHBoxLayout();
     indent->setContentsMargins(16, 0, 0, 0);
     indent->addWidget(handheld_panel);
@@ -366,7 +380,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
         legacy_applet = false;
         OnModeChanged();
     });
-    connect(handheld_group, &QButtonGroup::idClicked, this,
+    connect(handheld_switch, &QAbstractButton::clicked, this,
             &ConfigurePlayerAssignment::OnModeChanged);
     connect(builtin_picker, &QComboBox::currentIndexChanged, this,
             &ConfigurePlayerAssignment::OnBuiltinPicked);
@@ -403,15 +417,14 @@ void ConfigurePlayerAssignment::LoadConfiguration() {
         handler = HandlerReal;
     }
     handler_group->button(handler)->setChecked(true);
-    handheld_group->button(current == Settings::AppletMode::HandheldConsoleMode ? 1 : 0)
-        ->setChecked(true);
+    handheld_switch->setChecked(current == Settings::AppletMode::HandheldConsoleMode);
     UpdateModeUi();
 }
 
 int ConfigurePlayerAssignment::SelectedMode() const {
     switch (handler_group->checkedId()) {
     case HandlerModern:
-        return static_cast<int>(handheld_group->checkedId() == 1
+        return static_cast<int>(handheld_switch->isChecked()
                                     ? Settings::AppletMode::HandheldConsoleMode
                                     : Settings::AppletMode::ConsoleMode);
     case HandlerReal:
@@ -865,7 +878,7 @@ void ConfigurePlayerAssignment::RequestRumble(int player) {
 }
 
 void ConfigurePlayerAssignment::AddTopWidget(QWidget* widget) {
-    static_cast<QVBoxLayout*>(layout())->insertWidget(0, widget);
+    content_layout->insertWidget(0, widget);
 }
 
 void ConfigurePlayerAssignment::SetOpenPlayerTab(std::function<void(int)> open) {
