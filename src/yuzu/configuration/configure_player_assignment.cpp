@@ -309,7 +309,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     builtin_picker = new QComboBox(builtin_row);
     builtin_picker->addItem(tr("Auto-detect"), QString{});
     picker_row->addWidget(builtin_picker, 1);
-    builtin_identify = new QPushButton(tr("Identify handheld controller..."), builtin_row);
+    builtin_identify = new QPushButton(tr("Identify"), builtin_row);
     picker_row->addWidget(builtin_identify);
     builtin_layout->addLayout(picker_row);
     builtin_status = new QLabel(builtin_row);
@@ -532,7 +532,7 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
         builtin_identify->setText(tr("Press a button on the handheld's pad..."));
         return;
     }
-    builtin_identify->setText(tr("Identify handheld controller..."));
+    builtin_identify->setText(tr("Identify"));
 
     // What is stored for the way Eden was launched: the Steam handle under Steam, the raw
     // pad's identity otherwise (each launch kind keeps its own)
@@ -725,8 +725,22 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->addWidget(down);
 
 
+            // Swap and Config stand out: outlined in the highlight colour, filled on hover (and
+            // Swap filled while it waits for the second player)
+            const QString outlined = QStringLiteral(
+                "QToolButton { border: 1px solid palette(highlight); border-radius: 6px; "
+                "padding: 3px 12px; color: palette(highlight); font-weight: bold; "
+                "background: palette(base); }"
+                "QToolButton:hover { background: palette(highlight); "
+                "color: palette(highlighted-text); }"
+                "QToolButton:disabled { border-color: palette(mid); color: palette(mid); }");
+            const QString filled = QStringLiteral(
+                "QToolButton { border: 1px solid palette(highlight); border-radius: 6px; "
+                "padding: 3px 12px; background: palette(highlight); "
+                "color: palette(highlighted-text); font-weight: bold; }");
             auto* swap = new QToolButton(row);
-            swap->setAutoRaise(true);
+            swap->setCursor(Qt::PointingHandCursor);
+            swap->setStyleSheet(swap_from >= 0 ? filled : outlined);
             if (swap_from < 0) {
                 swap->setText(tr("Swap"));
             } else if (swap_from == player) {
@@ -739,9 +753,10 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->addWidget(swap);
 
             auto* settings = new QToolButton(row);
-            settings->setText(tr("Settings"));
-            settings->setAutoRaise(true);
-            settings->setToolTip(tr("Open Player %1's tab").arg(player + 1));
+            settings->setText(tr("Config"));
+            settings->setCursor(Qt::PointingHandCursor);
+            settings->setStyleSheet(outlined);
+            settings->setToolTip(tr("Open P%1's tab").arg(player + 1));
             settings->setEnabled(static_cast<bool>(open_player_tab));
             connect(settings, &QToolButton::clicked, this, [this, player] {
                 if (open_player_tab) {
