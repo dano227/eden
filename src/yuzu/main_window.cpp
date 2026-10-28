@@ -170,6 +170,10 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "video_core/shader_notify.h"
 
 #include <SDL3/SDL.h>
+#ifdef __linux__
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include <boost/container/flat_set.hpp>
 
@@ -1674,6 +1678,30 @@ bool PadHasGyro(SDL_JoystickID id) {
     return gyro;
 }
 
+/// Asks the Steam Deck's own controller to report its motion sensors. Steam Input turns them
+/// on only while its layout uses the gyro, so this repeats the settings report that
+/// SteamDeckGyroDSU (MIT) sends: IMU mode 0x18, both trackpads at 7 (as Steam keeps them),
+/// 0x31 = 2, 0x18 = 0.
+bool EnableDeckMotion(const QString& path) {
+#ifdef __linux__
+    if (!path.startsWith(QStringLiteral("/dev/hidraw"))) {
+        return false;
+    }
+    const int fd = ::open(path.toStdString().c_str(), O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        return false;
+    }
+    std::array<unsigned char, 65> report{0x00, 0x87, 0x0f, 0x30, 0x18, 0x00, 0x07, 0x07, 0x00,
+                                         0x08, 0x07, 0x00, 0x31, 0x02, 0x00, 0x18, 0x00};
+    const bool sent =
+        ::write(fd, report.data(), report.size()) == static_cast<ssize_t>(report.size());
+    ::close(fd);
+    return sent;
+#else
+    return false;
+#endif
+}
+
 /// A pad's USB product id, under the same lock as the rest of the API use.
 Uint16 PadProduct(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -3093,6 +3121,21 @@ void MainWindow::ApplyConsoleControllerMode() {
                         *std::find_if(motion_devices.begin(), motion_devices.end(), same_model);
                     if (PadHasGyro(device)) {
                         motion_source = device;
+                    }
+                }
+            }
+            // The deck's own controller only reports motion while its IMU is on: keep it on
+            if (motion_source && is_builtin) {
+                const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+                if (now_ms - deck_motion_sent_at >= 3000) {
+                    deck_motion_sent_at = now_ms;
+                    const QString path = PadPath(motion_source);
+                    const bool sent = EnableDeckMotion(path);
+                    static int logged = 0;
+                    if (!sent || logged < 1) {
+                        ++logged;
+                        LOG_INFO(Frontend, "console-mode: deck motion on via {}: {}",
+                                 path.toStdString(), sent ? "sent" : "failed");
                     }
                 }
             }
