@@ -445,12 +445,17 @@ void PlayerTabStyle::drawControl(ControlElement element, const QStyleOption* opt
                                  QPainter* painter, const QWidget* widget) const {
     const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option);
     const auto* bar = qobject_cast<const QTabBar*>(widget);
+    // A tab being dragged is drawn on a widget of its own inside the bar: it is the current tab
+    const bool dragged = !bar && widget && qobject_cast<const QTabBar*>(widget->parentWidget());
+    if (dragged) {
+        bar = qobject_cast<const QTabBar*>(widget->parentWidget());
+    }
     if (!tab || !bar || (element != CE_TabBarTabShape && element != CE_TabBarTabLabel)) {
         QProxyStyle::drawControl(element, option, painter, widget);
         return;
     }
     // Only a player tab is a bubble, in its player's colour; the others stay as they were
-    const int index = bar->tabAt(tab->rect.center());
+    const int index = dragged ? bar->currentIndex() : bar->tabAt(tab->rect.center());
     const QVariant data = index >= 0 ? bar->tabData(index) : QVariant{};
     if (data.metaType() != QMetaType::fromType<QColor>()) {
         QProxyStyle::drawControl(element, option, painter, widget);

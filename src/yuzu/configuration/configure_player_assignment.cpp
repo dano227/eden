@@ -714,43 +714,6 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
             const bool live = !entry.leaving;
 
-            // The profile the player's controller carries; picking one puts it on it, and
-            // "No profile" takes it off (the controller's mappings from before come back)
-            auto* profile = new QComboBox(row);
-            profile->addItem(tr("No profile"));
-            profile->addItems(profiles);
-            // (Not found is -1: "No profile")
-            profile->setCurrentIndex(
-                static_cast<int>(profiles.indexOf(QString::fromStdString(entry.profile)) + 1));
-            profile->setToolTip(tr("Mapping profile for P%1's controller").arg(player + 1));
-            profile->setEnabled(live && (!profiles.isEmpty() || !entry.profile.empty()));
-            connect(profile, qOverload<int>(&QComboBox::activated), this,
-                    [player, profile](int index) {
-                        auto& console = Common::GetControllerConsoleState();
-                        std::scoped_lock lock{console.mutex};
-                        if (index == 0) {
-                            console.profile_requests.push_back({player, {}, true});
-                        } else {
-                            console.profile_requests.push_back(
-                                {player, profile->itemText(index).toStdString()});
-                        }
-                    });
-            line->addWidget(profile);
-            // The quick way to take the profile off (as "No profile")
-            auto* remove = new QToolButton(row);
-            remove->setText(QStringLiteral("\u2715"));
-            remove->setAutoRaise(true);
-            remove->setToolTip(tr("Remove the profile from P%1").arg(player + 1));
-            remove->setFixedWidth(remove->sizeHint().height());
-            remove->setVisible(!entry.profile.empty());
-            remove->setEnabled(live);
-            connect(remove, &QToolButton::clicked, this, [player] {
-                auto& console = Common::GetControllerConsoleState();
-                std::scoped_lock lock{console.mutex};
-                console.profile_requests.push_back({player, {}, true});
-            });
-            line->addWidget(remove);
-
             auto* up = new QToolButton(row);
             up->setArrowType(Qt::UpArrow);
             up->setAutoRaise(true);
@@ -802,6 +765,44 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                 }
             });
             line->addWidget(settings);
+
+            // The profile the player's controller carries; picking one puts it on it, and
+            // "No profile" takes it off (the controller's mappings from before come back)
+            auto* profile = new QComboBox(row);
+            profile->addItem(tr("No profile"));
+            profile->addItems(profiles);
+            // (Not found is -1: "No profile")
+            profile->setCurrentIndex(
+                static_cast<int>(profiles.indexOf(QString::fromStdString(entry.profile)) + 1));
+            profile->setToolTip(tr("Mapping profile for P%1's controller").arg(player + 1));
+            profile->setEnabled(live && (!profiles.isEmpty() || !entry.profile.empty()));
+            connect(profile, qOverload<int>(&QComboBox::activated), this,
+                    [player, profile](int index) {
+                        auto& console = Common::GetControllerConsoleState();
+                        std::scoped_lock lock{console.mutex};
+                        if (index == 0) {
+                            console.profile_requests.push_back({player, {}, true});
+                        } else {
+                            console.profile_requests.push_back(
+                                {player, profile->itemText(index).toStdString()});
+                        }
+                    });
+            line->addWidget(profile);
+            // The quick way to take the profile off (as "No profile")
+            auto* remove = new QToolButton(row);
+            remove->setText(QStringLiteral("\u2715"));
+            remove->setAutoRaise(true);
+            remove->setToolTip(tr("Remove the profile from P%1").arg(player + 1));
+            remove->setFixedWidth(remove->sizeHint().height());
+            remove->setVisible(!entry.profile.empty());
+            remove->setEnabled(live);
+            connect(remove, &QToolButton::clicked, this, [player] {
+                auto& console = Common::GetControllerConsoleState();
+                std::scoped_lock lock{console.mutex};
+                console.profile_requests.push_back({player, {}, true});
+            });
+            line->addWidget(remove);
+
 
             players_list->addWidget(row);
             player_rows.push_back(row);
