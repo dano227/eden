@@ -449,12 +449,14 @@ void PlayerTabStyle::drawControl(ControlElement element, const QStyleOption* opt
         QProxyStyle::drawControl(element, option, painter, widget);
         return;
     }
-    // A player tab carries its player's colour; the others take the highlight
+    // Only a player tab is a bubble, in its player's colour; the others stay as they were
     const int index = bar->tabAt(tab->rect.center());
     const QVariant data = index >= 0 ? bar->tabData(index) : QVariant{};
-    const QColor accent = data.metaType() == QMetaType::fromType<QColor>()
-                              ? data.value<QColor>()
-                              : tab->palette.highlight().color();
+    if (data.metaType() != QMetaType::fromType<QColor>()) {
+        QProxyStyle::drawControl(element, option, painter, widget);
+        return;
+    }
+    const QColor accent = data.value<QColor>();
     const bool selected = tab->state & State_Selected;
     if (element == CE_TabBarTabShape) {
         painter->save();
@@ -492,8 +494,9 @@ void PlayerTabStyle::drawControl(ControlElement element, const QStyleOption* opt
 QSize PlayerTabStyle::sizeFromContents(ContentsType type, const QStyleOption* option,
                                        const QSize& size, const QWidget* widget) const {
     QSize result = QProxyStyle::sizeFromContents(type, option, size, widget);
-    if (type == CT_TabBarTab) {
-        // Room for the rounded ends and the bold label
+    // Room for a bubble's rounded ends and bold label (a player tab starts with its grip)
+    const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option);
+    if (type == CT_TabBarTab && tab && tab->text.startsWith(QChar(0x283F))) {
         result += QSize(14, 4);
     }
     return result;

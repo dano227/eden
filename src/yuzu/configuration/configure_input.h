@@ -46,8 +46,8 @@ class ConfigureInput;
 
 void OnDockedModeChanged(bool last_state, bool new_state, Core::System& system);
 
-/// The settings dialog's tab bar in the automatic modes: pill-shaped tabs, each player's in
-/// its colour (the tab's data), the selected one filled
+/// The settings dialog's tab bar in the automatic modes: the player tabs are bubbles in their
+/// player's colour (the tab's data), the selected one filled; the other tabs are unchanged
 class PlayerTabStyle : public QProxyStyle {
 public:
     explicit PlayerTabStyle(const QString& base);
