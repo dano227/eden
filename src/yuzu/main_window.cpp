@@ -2826,6 +2826,8 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
+    // The overlay only exists in the automatic modes: so does its View menu toggle
+    ui->action_Show_Controller_Overlay->setVisible(handheld || console);
     if (!handheld && !console) {
         if (!overlay_rows.empty()) {
             overlay_rows.clear();

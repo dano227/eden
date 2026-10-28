@@ -224,7 +224,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     panel_text->addWidget(panel_note);
     panel_layout->addLayout(panel_text, 1);
     handheld_group = new QButtonGroup(this);
-    panel_layout->addWidget(segmented(handheld_panel, {tr("Enable"), tr("Disable")}, {1, 0},
+    panel_layout->addWidget(segmented(handheld_panel, {tr("Yes"), tr("No")}, {1, 0},
                                       handheld_group),
                             0, Qt::AlignVCenter);
     auto* indent = new QHBoxLayout();

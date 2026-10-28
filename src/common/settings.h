@@ -204,7 +204,7 @@ struct Values {
     SwitchableSetting<bool> use_multi_core{linkage, true, "use_multi_core", Category::Core};
 
     /// Show the controller debug overlay (the real pad state plus the logic's actions)
-    SwitchableSetting<bool> console_debug_overlay{linkage, false, "console_debug_overlay",
+    SwitchableSetting<bool> console_debug_overlay{linkage, true, "console_debug_overlay",
                                                   Category::LibraryApplet};
     /// Name a controller on screen for a moment when it takes a player or leaves one
     SwitchableSetting<bool> console_hints{linkage, true, "console_hints",
