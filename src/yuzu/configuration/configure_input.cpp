@@ -514,7 +514,9 @@ void ConfigureInput::UpdateTabArrows() {
         // (A tab's buttons go when the tab is removed, as on leaving the Controls page)
         auto& left = tab_lefts[player];
         auto& right = tab_rights[player];
-        if (!movable) {
+        // Only a shown tab carries arrows: a hidden tab's buttons would float over the tab bar
+        // and swap a controller onto a player nobody holds
+        if (!movable || !tabs->isTabVisible(index)) {
             if (left || right) {
                 tabs->tabBar()->setTabButton(index, QTabBar::LeftSide, nullptr);
                 tabs->tabBar()->setTabButton(index, QTabBar::RightSide, nullptr);
