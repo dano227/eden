@@ -231,6 +231,14 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     connect(overlay_toggle, &QCheckBox::toggled, this,
             [](bool shown) { Settings::values.console_debug_overlay.SetValue(shown); });
     layout->addWidget(overlay_toggle);
+    hints_toggle = new QCheckBox(tr("Show Controller Hints"), this);
+    hints_toggle->setToolTip(tr("Names a controller in the screen's bottom-left corner for a "
+                                "moment when it joins as a player or leaves."));
+    original_hints = Settings::values.console_hints.GetValue();
+    hints_toggle->setChecked(original_hints);
+    connect(hints_toggle, &QCheckBox::toggled, this,
+            [](bool shown) { Settings::values.console_hints.SetValue(shown); });
+    layout->addWidget(hints_toggle);
     layout->addStretch(1);
 
     // The mode applies at once, so the players switch while the dialog is open; closing it
@@ -259,6 +267,7 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
         Settings::values.controller_applet_mode.SetValue(
             static_cast<Settings::AppletMode>(original_mode));
         Settings::values.console_debug_overlay.SetValue(original_overlay);
+        Settings::values.console_hints.SetValue(original_hints);
     }
 }
 
@@ -329,6 +338,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     }
     now_box->setVisible(automatic);
     overlay_toggle->setVisible(automatic);
+    hints_toggle->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }

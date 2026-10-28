@@ -264,7 +264,8 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                         tabs->setTabText(index, player_tab_titles[i]);
                         tabs->setTabToolTip(index, {});
                     } else if (shown) {
-                        tabs->setTabText(index, QStringLiteral("P%1").arg(i + 1));
+                        // The grip says the tab drags, like the Controllers tab's rows
+                        tabs->setTabText(index, QStringLiteral("\u283F P%1").arg(i + 1));
                         tabs->setTabToolTip(
                             index, tr("P%1: %2\nDrag left or right to change the player order")
                                        .arg(i + 1)
@@ -498,57 +499,53 @@ void ConfigureInput::UpdateTabArrows() {
     if (!tabs) {
         return;
     }
-    // (The buttons go when their tab is removed, as on leaving the Controls page)
-    if (!tab_left || !tab_right) {
-        arrows_tab = nullptr;
-        const auto make = [this](Qt::ArrowType arrow, int step) {
-            auto* button = new QToolButton;
-            button->setArrowType(arrow);
-            button->setAutoRaise(true);
-            button->setFixedSize(18, 18);
-            connect(button, &QToolButton::clicked, this, [this, step] {
-                if (arrows_player < 0) {
-                    return;
-                }
-                SwapPlayers(arrows_player, arrows_player + step);
-                pending_select = arrows_player + step;
-                pending_select_until = QDateTime::currentMSecsSinceEpoch() + 2000;
-            });
-            return button;
-        };
-        tab_left = make(Qt::LeftArrow, -1);
-        tab_right = make(Qt::RightArrow, 1);
-    }
-    const auto it = std::find(player_tabs.begin(), player_tabs.end(), tabs->currentWidget());
-    const int player =
-        tabs->isMovable() && it != player_tabs.end() ? static_cast<int>(it - player_tabs.begin())
-                                                     : -1;
-    QWidget* want = player >= 0 ? player_tabs[player] : nullptr;
-    if (want != arrows_tab) {
-        if (const int old = arrows_tab ? tabs->indexOf(arrows_tab) : -1; old >= 0) {
-            tabs->tabBar()->setTabButton(old, QTabBar::LeftSide, nullptr);
-            tabs->tabBar()->setTabButton(old, QTabBar::RightSide, nullptr);
-        }
-        arrows_tab = want;
-        if (want) {
-            const int index = tabs->indexOf(want);
-            tabs->tabBar()->setTabButton(index, QTabBar::LeftSide, tab_left);
-            tabs->tabBar()->setTabButton(index, QTabBar::RightSide, tab_right);
-        }
-        tab_left->setVisible(want != nullptr);
-        tab_right->setVisible(want != nullptr);
-    }
-    arrows_player = player;
+    const bool movable = tabs->isMovable();
     int last_player = -1;
     for (const auto& row : last_rows) {
         if (!row.leaving) {
             last_player = (std::max)(last_player, row.player);
         }
     }
-    tab_left->setEnabled(player > 0);
-    tab_left->setToolTip(tr("Swap with Player %1").arg(player));
-    tab_right->setEnabled(player >= 0 && player < last_player);
-    tab_right->setToolTip(tr("Swap with Player %1").arg(player + 2));
+    for (int player = 0; player < static_cast<int>(player_tabs.size()); ++player) {
+        const int index = tabs->indexOf(player_tabs[player]);
+        if (index < 0) {
+            continue;
+        }
+        // (A tab's buttons go when the tab is removed, as on leaving the Controls page)
+        auto& left = tab_lefts[player];
+        auto& right = tab_rights[player];
+        if (!movable) {
+            if (left || right) {
+                tabs->tabBar()->setTabButton(index, QTabBar::LeftSide, nullptr);
+                tabs->tabBar()->setTabButton(index, QTabBar::RightSide, nullptr);
+                delete left;
+                delete right;
+            }
+            continue;
+        }
+        if (!left || !right) {
+            const auto make = [this, player](Qt::ArrowType arrow, int step) {
+                auto* button = new QToolButton;
+                button->setArrowType(arrow);
+                button->setAutoRaise(true);
+                button->setFixedSize(16, 16);
+                connect(button, &QToolButton::clicked, this, [this, player, step] {
+                    SwapPlayers(player, player + step);
+                    pending_select = player + step;
+                    pending_select_until = QDateTime::currentMSecsSinceEpoch() + 2000;
+                });
+                return button;
+            };
+            left = make(Qt::LeftArrow, -1);
+            right = make(Qt::RightArrow, 1);
+            tabs->tabBar()->setTabButton(index, QTabBar::LeftSide, left);
+            tabs->tabBar()->setTabButton(index, QTabBar::RightSide, right);
+        }
+        left->setEnabled(player > 0);
+        left->setToolTip(tr("Swap with P%1").arg(player));
+        right->setEnabled(player < last_player);
+        right->setToolTip(tr("Swap with P%1").arg(player + 2));
+    }
 }
 
 QList<QWidget*> ConfigureInput::GetSubTabs() const {

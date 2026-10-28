@@ -61,6 +61,8 @@ private:
     QLabel* mode_info = nullptr;
     QCheckBox* overlay_toggle = nullptr;
     bool original_overlay = false;
+    QCheckBox* hints_toggle = nullptr;
+    bool original_hints = true;
     QWidget* now_box = nullptr;
 
     QWidget* builtin_row = nullptr;

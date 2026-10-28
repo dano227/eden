@@ -638,8 +638,21 @@ private:
     std::array<std::deque<ButtonPress>, 10> press_history{};
     std::array<std::bitset<32>, 10> buttons_down{};
     std::array<qint64, 10> press_history_since{};
-    /// Reads the players' buttons; true when one was pressed since the last look
+    /// Reads the players' buttons; true when the history changed (a press, or one expiring)
     bool PollButtonHistory();
+    /// A controller named on screen for a moment: it joined as a player, or left one
+    struct ControllerHint {
+        QString name;
+        int player;
+        bool joined;
+        qint64 at;
+    };
+    std::vector<ControllerHint> controller_hints;
+    /// The flashes already turned into hints, per player (green, red)
+    std::array<qint64, 10> hinted_join{};
+    std::array<qint64, 10> hinted_leave{};
+    /// True while the overlay animates (hints fading, history entries shrinking away)
+    bool OverlayAnimating() const;
     /// The user's own players (bindings, types, connected flags) while a console mode drives
     /// them: the binding sets each pad carries come from here, the config file only ever
     /// sees this, and leaving the mode puts it back

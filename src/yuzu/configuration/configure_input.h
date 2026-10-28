@@ -66,7 +66,7 @@ private:
 
     /// Player tabs dropped in a new order: the controllers take that order, the tabs go back
     void FinishTabDrag();
-    /// The arrows on the selected player tab, swapping with the player before or after it
+    /// The arrows on each player tab, swapping with the player before or after it
     void UpdateTabArrows();
     void SwapPlayers(int a, int b);
     void RetranslateUI();
@@ -108,10 +108,8 @@ private:
     bool tab_dragging = false;
     std::array<QString, 8> player_tab_titles{};
     std::vector<Common::ControllerConsoleState::PlayerRow> last_rows;
-    QPointer<QToolButton> tab_left;
-    QPointer<QToolButton> tab_right;
-    QWidget* arrows_tab = nullptr;
-    int arrows_player = -1;
+    std::array<QPointer<QToolButton>, 8> tab_lefts;
+    std::array<QPointer<QToolButton>, 8> tab_rights;
     /// The tab to select once its player shows (the controller a drag or an arrow moved)
     int pending_select = -1;
     long long pending_select_until = 0;
