@@ -54,10 +54,14 @@ private:
     void RequestSwap(int a, int b);
     void RequestRumble(int player);
 
-    /// Custom frontend or Real applet; the frontend's modes are radio buttons below it
-    QComboBox* mode = nullptr;
-    QWidget* frontend_row = nullptr;
-    QButtonGroup* frontend_modes = nullptr;
+    /// The handler (Manual, Modern Console, Real Hardware) and, under Modern Console, whether
+    /// this is a handheld with built-in controls (Docked Handheld). Legacy Applet has no button
+    /// for now; a setting already on it is kept until another pick.
+    enum Handler { HandlerManual, HandlerModern, HandlerReal };
+    QButtonGroup* handler_group = nullptr;
+    QFrame* handheld_panel = nullptr;
+    QButtonGroup* handheld_group = nullptr;
+    bool legacy_applet = false;
     QLabel* mode_info = nullptr;
     QCheckBox* overlay_toggle = nullptr;
     bool original_overlay = false;

@@ -156,38 +156,81 @@ private:
 ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
 
-    // The controller applet's mode: the real applet, or one of the custom frontend's modes
+    // The controller applet's mode, as a segmented control: Manual (players set by hand),
+    // Modern Console (automatic) and Real Hardware (the console's own applet)
     auto* mode_box = new QGroupBox(tr("Controller Assignment Handler"), this);
     auto* mode_layout = new QVBoxLayout(mode_box);
-    mode = new QComboBox(mode_box);
-    mode->addItem(tr("Custom"));
-    mode->addItem(tr("Real Hardware"));
-    mode_layout->addWidget(mode);
-
-    frontend_row = new QWidget(mode_box);
-    auto* frontend_layout = new QHBoxLayout(frontend_row);
-    frontend_layout->setContentsMargins(0, 0, 0, 0);
-    frontend_modes = new QButtonGroup(this);
-    const auto add_mode = [&](const QString& name, const QString& tooltip,
-                              Settings::AppletMode value) {
-        auto* button = new QRadioButton(name, frontend_row);
-        button->setToolTip(tooltip);
-        frontend_modes->addButton(button, static_cast<int>(value));
-        frontend_layout->addWidget(button);
+    const auto segmented = [](QWidget* parent, const QStringList& labels,
+                                  const std::vector<int>& ids, QButtonGroup* group) {
+        auto* bar = new QWidget(parent);
+        auto* bar_layout = new QHBoxLayout(bar);
+        bar_layout->setContentsMargins(0, 0, 0, 0);
+        bar_layout->setSpacing(0);
+        for (int k = 0; k < labels.size(); ++k) {
+            auto* button = new QPushButton(labels[k], bar);
+            button->setCheckable(true);
+            button->setCursor(Qt::PointingHandCursor);
+            QString style = QStringLiteral(
+                "QPushButton { padding: 5px 14px; border: 1px solid palette(mid); "
+                "background: palette(button); }"
+                "QPushButton:checked { background: palette(highlight); "
+                "color: palette(highlighted-text); border-color: palette(highlight); }");
+            if (k == 0) {
+                style += QStringLiteral("QPushButton { border-top-left-radius: 6px; "
+                                        "border-bottom-left-radius: 6px; }");
+            } else {
+                style += QStringLiteral("QPushButton { border-left-width: 0px; }");
+            }
+            if (k == labels.size() - 1) {
+                style += QStringLiteral("QPushButton { border-top-right-radius: 6px; "
+                                        "border-bottom-right-radius: 6px; }");
+            }
+            button->setStyleSheet(style);
+            group->addButton(button, ids[static_cast<std::size_t>(k)]);
+            bar_layout->addWidget(button);
+        }
+        return bar;
     };
-    add_mode(tr("Modern"), tr("Each controller that connects becomes the next player."),
-             Settings::AppletMode::ConsoleMode);
-    add_mode(tr("Docked Handheld (Couch Co-Op)"),
-             tr("For a handheld connected to a TV or monitor, played with other controllers."),
-             Settings::AppletMode::HandheldConsoleMode);
-    add_mode(tr("Disabled"),
-             tr("Players are set in each player's tab; games get them without a window."),
-             Settings::AppletMode::Disabled);
-    add_mode(tr("Legacy Applet"),
-             tr("Players are set in each player's tab; games open Eden's controller window."),
-             Settings::AppletMode::HLE);
-    frontend_layout->addStretch(1);
-    mode_layout->addWidget(frontend_row);
+    handler_group = new QButtonGroup(this);
+    auto* handler_row = new QHBoxLayout();
+    handler_row->addWidget(segmented(mode_box,
+                                     {tr("Manual"), tr("Modern Console"), tr("Real Hardware")},
+                                     {HandlerManual, HandlerModern, HandlerReal}, handler_group));
+    handler_row->addStretch(1);
+    mode_layout->addLayout(handler_row);
+
+    // Under Modern Console: whether this is a handheld with its own controls (Docked Handheld)
+    handheld_panel = new QFrame(mode_box);
+    handheld_panel->setObjectName(QStringLiteral("handheldPanel"));
+    handheld_panel->setStyleSheet(QStringLiteral(
+        "#handheldPanel { border: 1px solid palette(mid); border-radius: 8px; "
+        "background: palette(alternate-base); }"));
+    auto* panel_layout = new QHBoxLayout(handheld_panel);
+    panel_layout->setContentsMargins(12, 8, 12, 8);
+    auto* panel_text = new QVBoxLayout();
+    auto* panel_title =
+        new QLabel(tr("Portable Handheld Gaming Device with Built-in Controller"), handheld_panel);
+    QFont title_font = panel_title->font();
+    title_font.setBold(true);
+    panel_title->setFont(title_font);
+    panel_title->setWordWrap(true);
+    auto* panel_note = new QLabel(tr("Like a Steam Deck, Legion Go or ROG Ally on a TV: other "
+                                     "controllers come first, and the built-in controls play "
+                                     "only when none is connected."),
+                                  handheld_panel);
+    panel_note->setWordWrap(true);
+    panel_note->setEnabled(false);
+    panel_text->addWidget(panel_title);
+    panel_text->addWidget(panel_note);
+    panel_layout->addLayout(panel_text, 1);
+    handheld_group = new QButtonGroup(this);
+    panel_layout->addWidget(segmented(handheld_panel, {tr("Enable"), tr("Disable")}, {1, 0},
+                                      handheld_group),
+                            0, Qt::AlignVCenter);
+    auto* indent = new QHBoxLayout();
+    indent->setContentsMargins(16, 0, 0, 0);
+    indent->addWidget(handheld_panel);
+    mode_layout->addLayout(indent);
     mode_info = new QLabel(mode_box);
     mode_info->setWordWrap(true);
     mode_layout->addWidget(mode_info);
@@ -244,9 +287,12 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     // The mode applies at once, so the players switch while the dialog is open; closing it
     // without applying puts the previous mode back (see the destructor)
     original_mode = static_cast<int>(Settings::values.controller_applet_mode.GetValue());
-    connect(mode, &QComboBox::currentIndexChanged, this,
-            &ConfigurePlayerAssignment::OnModeChanged);
-    connect(frontend_modes, &QButtonGroup::idClicked, this,
+    connect(handler_group, &QButtonGroup::idClicked, this, [this] {
+        // Picking any handler leaves the hidden Legacy Applet
+        legacy_applet = false;
+        OnModeChanged();
+    });
+    connect(handheld_group, &QButtonGroup::idClicked, this,
             &ConfigurePlayerAssignment::OnModeChanged);
     connect(builtin_picker, &QComboBox::currentIndexChanged, this,
             &ConfigurePlayerAssignment::OnBuiltinPicked);
@@ -273,25 +319,33 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
 
 void ConfigurePlayerAssignment::LoadConfiguration() {
     const auto current = Settings::values.controller_applet_mode.GetValue();
-    const bool real_applet = current == Settings::AppletMode::LLE;
-    // The real applet keeps Legacy Applet selected underneath, for switching back
-    auto* button = frontend_modes->button(
-        static_cast<int>(real_applet ? Settings::AppletMode::HLE : current));
-    if (!button) {
-        button = frontend_modes->button(static_cast<int>(Settings::AppletMode::HLE));
+    // Legacy Applet has no button for now: it shows as Manual and stays until another pick
+    legacy_applet = current == Settings::AppletMode::HLE;
+    int handler = HandlerManual;
+    if (current == Settings::AppletMode::ConsoleMode ||
+        current == Settings::AppletMode::HandheldConsoleMode) {
+        handler = HandlerModern;
+    } else if (current == Settings::AppletMode::LLE) {
+        handler = HandlerReal;
     }
-    const bool blocked = mode->blockSignals(true);
-    button->setChecked(true);
-    mode->setCurrentIndex(real_applet ? 1 : 0);
-    mode->blockSignals(blocked);
+    handler_group->button(handler)->setChecked(true);
+    handheld_group->button(current == Settings::AppletMode::HandheldConsoleMode ? 1 : 0)
+        ->setChecked(true);
     UpdateModeUi();
 }
 
 int ConfigurePlayerAssignment::SelectedMode() const {
-    if (mode->currentIndex() == 1) {
+    switch (handler_group->checkedId()) {
+    case HandlerModern:
+        return static_cast<int>(handheld_group->checkedId() == 1
+                                    ? Settings::AppletMode::HandheldConsoleMode
+                                    : Settings::AppletMode::ConsoleMode);
+    case HandlerReal:
         return static_cast<int>(Settings::AppletMode::LLE);
+    default:
+        return static_cast<int>(legacy_applet ? Settings::AppletMode::HLE
+                                              : Settings::AppletMode::Disabled);
     }
-    return frontend_modes->checkedId();
 }
 
 void ConfigurePlayerAssignment::OnModeChanged() {
@@ -308,7 +362,7 @@ void ConfigurePlayerAssignment::ApplyConfiguration() {
 
 void ConfigurePlayerAssignment::UpdateModeUi() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
-    frontend_row->setVisible(mode->currentIndex() == 0);
+    handheld_panel->setVisible(handler_group->checkedId() == HandlerModern);
     // Only the automatic modes have live players to show
     const bool automatic = IsAutomatic(selected);
     switch (selected) {

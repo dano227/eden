@@ -2437,8 +2437,8 @@ void MainWindow::RenderControllerOverlay() {
                          Qt::AlignVCenter | Qt::AlignLeft, overlay_row_name[row.player]);
         painter.setPen(Qt::NoPen);
 
-        // The history bubble: the last presses, newest brightest, each shrinking away as it
-        // expires (and the bubble with them)
+        // The history bubble: the last presses, newest first and brightest, each shrinking
+        // away at the far end as it expires (and the bubble with them)
         const auto& presses = press_history[row.player];
         double chips_w = 0;
         for (const auto& press : presses) {
@@ -2452,7 +2452,7 @@ void MainWindow::RenderControllerOverlay() {
                                     row_h / 2.0, row_h / 2.0);
             double cx = bubble_x + inner;
             const int n = static_cast<int>(presses.size());
-            for (int k = 0; k < n; ++k) {
+            for (int k = n - 1; k >= 0; --k) {
                 const double scale = press_scale(presses[k]);
                 if (scale <= 0.0) {
                     continue;
