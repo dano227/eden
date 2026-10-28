@@ -291,21 +291,22 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             // settings dialog's, shared with the other pages: only on this page, in these modes)
             QTabBar* bar = tabs->tabBar();
             const bool pills = automatic && controls_page;
-            // (No RTTI here: the style is known by its name)
-            const bool styled = bar->style()->objectName() == QStringLiteral("PlayerTabStyle");
-            if (pills && !styled) {
+            // (The bar is remembered: under a style sheet its style() is a wrapper, not ours)
+            if (pills && pill_bar != bar) {
                 auto* style = new PlayerTabStyle(QApplication::style()->name());
                 style->setParent(bar);
                 bar->setStyle(style);
-            } else if (!pills && styled) {
+                pill_bar = bar;
+            } else if (!pills && pill_bar == bar) {
                 bar->setStyle(nullptr);
+                pill_bar = nullptr;
             }
-            if (pills) {
-                for (std::size_t i = 0; i < player_tabs.size(); ++i) {
-                    if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
-                        bar->setTabData(index, ConfigurePlayerAssignment::PlayerColor(
-                                                   static_cast<int>(i)));
-                    }
+            // A player tab's colour is what makes it a bubble: none outside these modes
+            for (std::size_t i = 0; i < player_tabs.size(); ++i) {
+                if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
+                    bar->setTabData(index, pills ? QVariant(ConfigurePlayerAssignment::PlayerColor(
+                                                       static_cast<int>(i)))
+                                                 : QVariant{});
                 }
             }
             if (tabs != drag_tabs) {
@@ -437,25 +438,25 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
     }
 }
 
-PlayerTabStyle::PlayerTabStyle(const QString& base) : QProxyStyle(base) {
-    setObjectName(QStringLiteral("PlayerTabStyle"));
-}
+PlayerTabStyle::PlayerTabStyle(const QString& base) : QProxyStyle(base) {}
 
 void PlayerTabStyle::drawControl(ControlElement element, const QStyleOption* option,
                                  QPainter* painter, const QWidget* widget) const {
     const auto* tab = qstyleoption_cast<const QStyleOptionTab*>(option);
     const auto* bar = qobject_cast<const QTabBar*>(widget);
-    // A tab being dragged is drawn on a widget of its own inside the bar: it is the current tab
-    const bool dragged = !bar && widget && qobject_cast<const QTabBar*>(widget->parentWidget());
-    if (dragged) {
-        bar = qobject_cast<const QTabBar*>(widget->parentWidget());
-    }
     if (!tab || !bar || (element != CE_TabBarTabShape && element != CE_TabBarTabLabel)) {
         QProxyStyle::drawControl(element, option, painter, widget);
         return;
     }
+    // The tab is found by its text: a dragged tab is painted into an image of its own, where
+    // its position says nothing
+    int index = -1;
+    for (int i = 0; i < bar->count() && index < 0; ++i) {
+        if (bar->tabText(i) == tab->text) {
+            index = i;
+        }
+    }
     // Only a player tab is a bubble, in its player's colour; the others stay as they were
-    const int index = dragged ? bar->currentIndex() : bar->tabAt(tab->rect.center());
     const QVariant data = index >= 0 ? bar->tabData(index) : QVariant{};
     if (data.metaType() != QMetaType::fromType<QColor>()) {
         QProxyStyle::drawControl(element, option, painter, widget);

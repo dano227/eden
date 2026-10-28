@@ -28,6 +28,7 @@ class System;
 class QCheckBox;
 class QString;
 class QTimer;
+class QTabBar;
 class QTabWidget;
 
 class ConfigureInputAdvanced;
@@ -115,6 +116,8 @@ private:
     /// Dragging the player tabs (the automatic modes): the tab bar watched, and the tab order
     /// when the drag began
     QTabWidget* drag_tabs = nullptr;
+    /// The tab bar drawn with PlayerTabStyle (its player tabs as bubbles)
+    QPointer<QTabBar> pill_bar;
     QList<QWidget*> tab_order;
     QWidget* dragged_tab = nullptr;
     bool tab_dragging = false;
