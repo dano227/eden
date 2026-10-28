@@ -1744,6 +1744,16 @@ bool IsHandheldMaker(Uint16 vendor) {
     return vendor == 0x28DE || vendor == 0x17EF || vendor == 0x0B05 || vendor == 0x0DB0;
 }
 
+/// Whether a pad can be a handheld's own controls. Valve also makes standalone controllers
+/// (the Steam Controllers report no gamepad type under Steam either): only the Deck's counts.
+/// Under Steam the virtual pad reports the real controller's ids.
+bool CouldBeHandheld(Uint16 vendor, Uint16 product) {
+    if (vendor == 0x28DE) {
+        return product == 0x1205;
+    }
+    return !IsControllerMaker(vendor);
+}
+
 /// True for the controller types Steam reports for standalone controllers
 bool IsStandaloneControllerType(SDL_GamepadType type) {
     return type != SDL_GAMEPAD_TYPE_UNKNOWN && type != SDL_GAMEPAD_TYPE_STANDARD;
@@ -3029,10 +3039,19 @@ void MainWindow::ApplyConsoleControllerMode() {
         u32 holder = 0;
         if (!want.empty()) {
             for (const auto& [id, ident] : live) {
-                if (fmt::format("{:#x}", PadSteamHandle(id)) == want) {
-                    ++count;
-                    holder = id;
+                if (fmt::format("{:#x}", PadSteamHandle(id)) != want) {
+                    continue;
                 }
+                if (!CouldBeHandheld(PadVendor(id), PadProduct(id))) {
+                    // An earlier build took a standalone controller for the handheld's own
+                    LOG_INFO(Frontend, "console-mode: stored handheld {} is a {:04x}:{:04x} "
+                                       "controller, not a handheld's: forgotten",
+                             want, PadVendor(id), PadProduct(id));
+                    Settings::values.builtin_pad_steam_handle.SetValue(std::string{});
+                    continue;
+                }
+                ++count;
+                holder = id;
             }
         }
         bool adopted = false;
@@ -3045,7 +3064,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             u32 fit = 0;
             for (const auto& [id, ident] : live) {
                 if (SDL_GetGamepadTypeForID(id) == SDL_GAMEPAD_TYPE_UNKNOWN &&
-                    PadSteamHandle(id) != 0) {
+                    PadSteamHandle(id) != 0 && CouldBeHandheld(PadVendor(id), PadProduct(id))) {
                     ++fits;
                     fit = id;
                 }
@@ -3055,7 +3074,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                 holder = fit;
                 adopted = true;
             } else if (want.empty() && live.size() == 1 &&
-                       !IsStandaloneControllerType(SDL_GetGamepadTypeForID(live.begin()->first))) {
+                       !IsStandaloneControllerType(SDL_GetGamepadTypeForID(live.begin()->first)) &&
+                       CouldBeHandheld(PadVendor(live.begin()->first),
+                                       PadProduct(live.begin()->first))) {
                 count = 1;
                 holder = live.begin()->first;
             }
@@ -3157,7 +3178,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                         continue;
                     }
                     const Uint16 vendor = PadVendor(id);
-                    if (IsHandheldMaker(vendor)) {
+                    if (IsHandheldMaker(vendor) && CouldBeHandheld(vendor, PadProduct(id))) {
                         makers.push_back(id);
                         // Valve also makes standalone controllers: the deck's own wins
                         if (vendor == 0x28DE && PadProduct(id) == 0x1205) {
