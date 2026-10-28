@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QTimer>
 #include <array>
+#include <bitset>
 #include <chrono>
 #include <deque>
 #include <map>
@@ -585,6 +586,8 @@ private:
     /// player -> the set its controller carries, as of the last tick (the player's own when
     /// it has no controller)
     std::array<int, 10> slot_set{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    /// A set's mappings before this session's first profile on it, for taking the profile off
+    std::map<int, Settings::PlayerInput> set_before_profile;
     /// The handheld's own pad (connection instance): never a player while other pads are
     /// connected
     u32 builtin_pad_id = 0;
@@ -626,6 +629,17 @@ private:
     QTimer console_activity_timer;
     void RenderControllerOverlay();
     void PollControllerActivity();
+    /// The last buttons each player pressed (emulated, as the game sees them), newest last,
+    /// for the overlay; cleared when another controller takes the player
+    struct ButtonPress {
+        int button;
+        qint64 at;
+    };
+    std::array<std::deque<ButtonPress>, 10> press_history{};
+    std::array<std::bitset<32>, 10> buttons_down{};
+    std::array<qint64, 10> press_history_since{};
+    /// Reads the players' buttons; true when one was pressed since the last look
+    bool PollButtonHistory();
     /// The user's own players (bindings, types, connected flags) while a console mode drives
     /// them: the binding sets each pad carries come from here, the config file only ever
     /// sees this, and leaving the mode puts it back

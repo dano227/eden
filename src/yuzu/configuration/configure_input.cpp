@@ -260,15 +260,15 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                     }
                     tabs->setTabVisible(index, shown);
                     tabs->tabBar()->setTabTextColor(index, label);
-                    // The tab names its controller, so dragging it reads as moving that
-                    // controller (held a moment after a drop, until the engine swapped them)
                     if (!automatic) {
                         tabs->setTabText(index, player_tab_titles[i]);
                         tabs->setTabToolTip(index, {});
-                    } else if (shown && now >= tab_labels_held_until) {
-                        tabs->setTabText(index, PlayerTabText(i, row->name));
+                    } else if (shown) {
+                        tabs->setTabText(index, QStringLiteral("P%1").arg(i + 1));
                         tabs->setTabToolTip(
-                            index, tr("Drag left or right to change the player order"));
+                            index, tr("P%1: %2\nDrag left or right to change the player order")
+                                       .arg(i + 1)
+                                       .arg(QString::fromStdString(row->name)));
                     }
                 }
             }
@@ -406,14 +406,6 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
     }
 }
 
-QString ConfigureInput::PlayerTabText(std::size_t player, const std::string& name) const {
-    QString controller = QString::fromStdString(name);
-    if (controller.size() > 18) {
-        controller = controller.left(17) + QStringLiteral("\u2026");
-    }
-    return QStringLiteral("\u283F %1 \u00b7 %2").arg(player_tab_titles[player], controller);
-}
-
 void ConfigureInput::SwapPlayers(int a, int b) {
     if (a == b || a < 0 || b < 0 || a >= 8 || b >= 8) {
         return;
@@ -488,22 +480,6 @@ void ConfigureInput::FinishTabDrag() {
             std::swap(holder[places[k]], holder[from]);
         }
     }
-
-    // The labels show the new order right away; the engine catches up on its next pass
-    const auto name_of = [this](int player) {
-        for (const auto& row : last_rows) {
-            if (row.player == player) {
-                return row.name;
-            }
-        }
-        return std::string{};
-    };
-    for (std::size_t k = 0; k < places.size(); ++k) {
-        if (const int index = tabs->indexOf(player_tabs[places[k]]); index >= 0) {
-            tabs->setTabText(index, PlayerTabText(places[k], name_of(dropped[k])));
-        }
-    }
-    tab_labels_held_until = QDateTime::currentMSecsSinceEpoch() + 800;
 
     // The selected tab follows the controller that was dragged
     const auto dragged = std::find(player_tabs.begin(), player_tabs.end(), dragged_tab);

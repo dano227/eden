@@ -45,9 +45,15 @@ struct ControllerConsoleState {
     std::vector<std::pair<int, int>> swap_requests;
     /// Players whose controller the Controllers tab asked to rumble (a click on its row)
     std::vector<int> rumble_requests;
-    /// Input profiles picked for a player, as (player, profile name): the engine puts the
-    /// profile's mappings on the set the player's controller carries ("" only drops the name)
-    std::vector<std::pair<int, std::string>> profile_requests;
+    /// An input profile picked for a player: the engine puts the profile's mappings on the set
+    /// the player's controller carries. No name takes the profile off: `restore` puts back the
+    /// mappings the set had before this session's first profile, else only the name goes.
+    struct ProfileRequest {
+        int player;
+        std::string name;
+        bool restore = false;
+    };
+    std::vector<ProfileRequest> profile_requests;
     /// Bumped whenever the engine reloads the emulated controllers (a swap, a pad arriving or
     /// leaving): the Controls page refreshes its player tabs from them when it changes
     unsigned long long generation = 0;

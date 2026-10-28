@@ -510,19 +510,26 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
             const bool live = !entry.leaving;
 
-            // The profile the player's controller carries; picking one puts it on it
+            // The profile the player's controller carries; picking one puts it on it, and
+            // "No profile" takes it off (the controller's mappings from before come back)
             auto* profile = new QComboBox(row);
-            profile->setPlaceholderText(tr("No profile"));
+            profile->addItem(tr("No profile"));
             profile->addItems(profiles);
-            profile->setCurrentIndex(profiles.indexOf(QString::fromStdString(entry.profile)));
+            // (Not found is -1: "No profile")
+            profile->setCurrentIndex(
+                static_cast<int>(profiles.indexOf(QString::fromStdString(entry.profile)) + 1));
             profile->setToolTip(tr("Mapping profile for P%1's controller").arg(player + 1));
-            profile->setEnabled(live && !profiles.isEmpty());
+            profile->setEnabled(live && (!profiles.isEmpty() || !entry.profile.empty()));
             connect(profile, qOverload<int>(&QComboBox::activated), this,
                     [player, profile](int index) {
                         auto& console = Common::GetControllerConsoleState();
                         std::scoped_lock lock{console.mutex};
-                        console.profile_requests.emplace_back(
-                            player, profile->itemText(index).toStdString());
+                        if (index == 0) {
+                            console.profile_requests.push_back({player, {}, true});
+                        } else {
+                            console.profile_requests.push_back(
+                                {player, profile->itemText(index).toStdString()});
+                        }
                     });
             line->addWidget(profile);
 

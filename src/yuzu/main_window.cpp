@@ -2201,8 +2201,18 @@ void MainWindow::RenderControllerOverlay() {
     const bool automatic = mode == Settings::AppletMode::ConsoleMode ||
                            mode == Settings::AppletMode::HandheldConsoleMode;
     auto& overlay = Common::GetControllerOverlayFrame();
-    if (!Settings::values.console_debug_overlay.GetValue() || !automatic ||
-        overlay_rows.empty()) {
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    // A controller that just took a player is named for a moment, overlay shown or not
+    constexpr qint64 hint_ms = 3000;
+    std::vector<const OverlayRow*> hints;
+    for (const auto& row : overlay_rows) {
+        if (automatic && row.pad != 0 && row.flash == 1 && now_ms - row.flash_since < hint_ms) {
+            hints.push_back(&row);
+        }
+    }
+    const bool show_rows = Settings::values.console_debug_overlay.GetValue() && automatic &&
+                           !overlay_rows.empty();
+    if (!show_rows && hints.empty()) {
         std::scoped_lock lock{overlay.mutex};
         if (overlay.enabled) {
             overlay.enabled = false;
@@ -2210,40 +2220,206 @@ void MainWindow::RenderControllerOverlay() {
         }
         return;
     }
-    QFont font{QStringLiteral("monospace")};
-    font.setPointSize(9);
-    const QFontMetrics fm{font};
-    int width = 12;
-    for (const auto& row : overlay_rows) {
-        width = (std::max)(width, fm.horizontalAdvance(row.text) + 12);
-    }
-    const int height = 12 + fm.lineSpacing() * static_cast<int>(overlay_rows.size());
-    QImage image{width, height, QImage::Format_RGBA8888};
-    image.fill(QColor(0, 0, 0, 140));
-    QPainter painter{&image};
-    painter.setFont(font);
-    painter.setPen(Qt::white);
-    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
-    overlay_blink.clear();
-    int y = 6 + fm.ascent();
-    for (const auto& row : overlay_rows) {
-        const bool blink = row.flash != 0 && BlinkOn(now_ms - row.flash_since);
-        overlay_blink.push_back(blink);
-        std::optional<QColor> fill;
-        if (row.flash == 2) {
-            if (blink) {
-                fill = QColor(210, 60, 60, 190);
+
+    static constexpr std::array<QColor, 8> player_colors{
+        QColor(79, 142, 247), QColor(239, 91, 91), QColor(47, 191, 113), QColor(245, 184, 46),
+        QColor(155, 108, 242), QColor(242, 140, 56), QColor(46, 196, 201), QColor(227, 107, 174),
+    };
+    const auto player_color = [](int player) { return player_colors[player % 8]; };
+    // The Switch buttons as chips: a label and a colour
+    const auto chip = [](int button) -> std::pair<QString, QColor> {
+        using namespace Settings::NativeButton;
+        switch (button) {
+        case A:
+            return {QStringLiteral("A"), QColor(231, 76, 60)};
+        case B:
+            return {QStringLiteral("B"), QColor(230, 180, 20)};
+        case X:
+            return {QStringLiteral("X"), QColor(52, 152, 219)};
+        case Y:
+            return {QStringLiteral("Y"), QColor(46, 184, 104)};
+        case LStick:
+            return {QStringLiteral("LS"), QColor(70, 90, 112)};
+        case RStick:
+            return {QStringLiteral("RS"), QColor(70, 90, 112)};
+        case L:
+            return {QStringLiteral("L"), QColor(120, 132, 140)};
+        case R:
+            return {QStringLiteral("R"), QColor(120, 132, 140)};
+        case ZL:
+            return {QStringLiteral("ZL"), QColor(98, 108, 116)};
+        case ZR:
+            return {QStringLiteral("ZR"), QColor(98, 108, 116)};
+        case Plus:
+            return {QStringLiteral("+"), QColor(142, 88, 182)};
+        case Minus:
+            return {QStringLiteral("\u2212"), QColor(142, 88, 182)};
+        case DLeft:
+            return {QStringLiteral("\u2190"), QColor(84, 99, 116)};
+        case DUp:
+            return {QStringLiteral("\u2191"), QColor(84, 99, 116)};
+        case DRight:
+            return {QStringLiteral("\u2192"), QColor(84, 99, 116)};
+        case DDown:
+            return {QStringLiteral("\u2193"), QColor(84, 99, 116)};
+        case Home:
+            return {QStringLiteral("\u2302"), QColor(60, 60, 66)};
+        case Screenshot:
+            return {QStringLiteral("\u25C9"), QColor(60, 60, 66)};
+        case SLLeft:
+        case SLRight:
+            return {QStringLiteral("SL"), QColor(120, 132, 140)};
+        default:
+            return {QStringLiteral("SR"), QColor(120, 132, 140)};
+        }
+    };
+
+    QFont badge_font;
+    badge_font.setPixelSize(12);
+    badge_font.setBold(true);
+    QFont name_font;
+    name_font.setPixelSize(13);
+    QFont chip_font;
+    chip_font.setPixelSize(11);
+    chip_font.setBold(true);
+    QFont hint_font;
+    hint_font.setPixelSize(15);
+    hint_font.setBold(true);
+    const QFontMetrics name_fm{name_font};
+    const QFontMetrics chip_fm{chip_font};
+    const QFontMetrics hint_fm{hint_font};
+
+    constexpr int pad = 8;
+    constexpr int row_h = 24;
+    constexpr int badge_w = 30;
+    constexpr int chip_h = 18;
+    constexpr int chip_gap = 3;
+    constexpr int hint_h = 30;
+    const auto chip_width = [&](const QString& text) {
+        return (std::max)(chip_h, chip_fm.horizontalAdvance(text) + 10);
+    };
+
+    int name_w = 0;
+    int chips_w = 0;
+    if (show_rows) {
+        for (const auto& row : overlay_rows) {
+            name_w = (std::max)(name_w, name_fm.horizontalAdvance(overlay_row_name[row.player]));
+            int w = 0;
+            for (const auto& press : press_history[row.player]) {
+                w += chip_width(chip(press.button).first) + chip_gap;
             }
-        } else if (row.pad != 0 && active.contains(row.pad)) {
-            fill = QColor(60, 120, 230, 190);
-        } else if (blink) {
-            fill = QColor(60, 180, 90, 190);
+            chips_w = (std::max)(chips_w, w);
         }
-        if (fill) {
-            painter.fillRect(2, y - fm.ascent() - 1, width - 4, fm.lineSpacing(), *fill);
+    }
+    const int rows_w = show_rows ? pad + badge_w + 8 + name_w + (chips_w ? 12 + chips_w : 0) + pad
+                                 : 0;
+    int hints_w = 0;
+    for (const OverlayRow* row : hints) {
+        const QString text = QStringLiteral("%1  \u2192").arg(overlay_row_name[row->player]);
+        hints_w = (std::max)(hints_w, 12 + hint_fm.horizontalAdvance(text) + 8 + 36 + 10);
+    }
+    const int width = (std::max)(rows_w, hints_w) + 2;
+    const int hints_h = static_cast<int>(hints.size()) * (hint_h + 6);
+    const int rows_h = show_rows ? pad * 2 + row_h * static_cast<int>(overlay_rows.size()) : 0;
+    const int height = hints_h + rows_h + 2;
+
+    QImage image{width, height, QImage::Format_RGBA8888};
+    image.fill(Qt::transparent);
+    QPainter painter{&image};
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setPen(Qt::NoPen);
+
+    // The join hints: a pill per controller that just took a player
+    int y = 1;
+    for (const OverlayRow* row : hints) {
+        const QString name = overlay_row_name[row->player];
+        const QString text = QStringLiteral("%1  \u2192").arg(name);
+        const int w = 12 + hint_fm.horizontalAdvance(text) + 8 + 36 + 10;
+        // Fades in its last half second
+        const qint64 left = hint_ms - (now_ms - row->flash_since);
+        const int alpha = left < 500 ? static_cast<int>(255 * left / 500) : 255;
+        painter.setBrush(QColor(18, 18, 22, 215 * alpha / 255));
+        painter.drawRoundedRect(QRectF(1, y, w, hint_h), hint_h / 2.0, hint_h / 2.0);
+        painter.setFont(hint_font);
+        painter.setPen(QColor(255, 255, 255, alpha));
+        painter.drawText(QRect(13, y, w, hint_h), Qt::AlignVCenter | Qt::AlignLeft, text);
+        painter.setPen(Qt::NoPen);
+        QColor badge = player_color(row->player);
+        badge.setAlpha(alpha);
+        painter.setBrush(badge);
+        const QRectF badge_rect(1 + w - 10 - 36, y + 5, 36, hint_h - 10);
+        painter.drawRoundedRect(badge_rect, badge_rect.height() / 2, badge_rect.height() / 2);
+        painter.setPen(QColor(255, 255, 255, alpha));
+        painter.drawText(badge_rect, Qt::AlignCenter, QStringLiteral("P%1").arg(row->player + 1));
+        painter.setPen(Qt::NoPen);
+        y += hint_h + 6;
+    }
+
+    // The players: badge, controller, and the last buttons pressed (newest brightest)
+    overlay_blink.clear();
+    if (show_rows) {
+        painter.setBrush(QColor(14, 14, 18, 170));
+        painter.drawRoundedRect(QRectF(1, y, width - 2, rows_h), 10, 10);
+        int ry = y + pad;
+        for (const auto& row : overlay_rows) {
+            const bool blink = row.flash != 0 && BlinkOn(now_ms - row.flash_since);
+            overlay_blink.push_back(blink);
+            std::optional<QColor> fill;
+            if (row.flash == 2) {
+                if (blink) {
+                    fill = QColor(210, 60, 60, 150);
+                }
+            } else if (row.pad != 0 && active.contains(row.pad)) {
+                fill = QColor(60, 120, 230, 110);
+            } else if (blink) {
+                fill = QColor(60, 180, 90, 140);
+            }
+            if (fill) {
+                painter.setBrush(*fill);
+                painter.drawRoundedRect(QRectF(4, ry + 1, width - 8, row_h - 2), 6, 6);
+            }
+            const bool gone = row.pad == 0;
+            QColor badge = player_color(row.player);
+            if (gone) {
+                badge.setAlpha(110);
+            }
+            painter.setBrush(badge);
+            const QRectF badge_rect(pad, ry + 3, badge_w, row_h - 6);
+            painter.drawRoundedRect(badge_rect, badge_rect.height() / 2, badge_rect.height() / 2);
+            painter.setFont(badge_font);
+            painter.setPen(Qt::white);
+            painter.drawText(badge_rect, Qt::AlignCenter, QStringLiteral("P%1").arg(row.player + 1));
+            painter.setFont(name_font);
+            painter.setPen(gone ? QColor(255, 255, 255, 120) : QColor(240, 240, 240));
+            painter.drawText(QRect(pad + badge_w + 8, ry, name_w + 4, row_h),
+                             Qt::AlignVCenter | Qt::AlignLeft, overlay_row_name[row.player]);
+            painter.setPen(Qt::NoPen);
+
+            int cx = pad + badge_w + 8 + name_w + 12;
+            const auto& presses = press_history[row.player];
+            const int count = static_cast<int>(presses.size());
+            for (int k = 0; k < count; ++k) {
+                const auto& [label, color] = chip(presses[k].button);
+                // Older chips fade, and all of them dim once the player has been idle a while
+                int alpha = 255 - (count - 1 - k) * 15;
+                if (now_ms - presses.back().at > 4000) {
+                    alpha /= 2;
+                }
+                QColor fill_color = color;
+                fill_color.setAlpha(alpha);
+                const int w = chip_width(label);
+                const QRectF rect(cx, ry + (row_h - chip_h) / 2.0, w, chip_h);
+                painter.setBrush(fill_color);
+                painter.drawRoundedRect(rect, chip_h / 2.0, chip_h / 2.0);
+                painter.setFont(chip_font);
+                painter.setPen(QColor(255, 255, 255, alpha));
+                painter.drawText(rect, Qt::AlignCenter, label);
+                painter.setPen(Qt::NoPen);
+                cx += w + chip_gap;
+            }
+            ry += row_h;
         }
-        painter.drawText(6, y, row.text);
-        y += fm.lineSpacing();
     }
     painter.end();
 
@@ -2279,9 +2455,53 @@ void MainWindow::PollControllerActivity() {
     for (const auto& row : overlay_rows) {
         blink.push_back(row.flash != 0 && BlinkOn(now_ms - row.flash_since));
     }
-    if (active != overlay_active_pads || blink != overlay_blink) {
+    const bool pressed = PollButtonHistory();
+    if (pressed || active != overlay_active_pads || blink != overlay_blink) {
         RenderControllerOverlay();
     }
+}
+
+bool MainWindow::PollButtonHistory() {
+    if (!QtCommon::system || !QtCommon::system->IsPoweredOn()) {
+        return false;
+    }
+    auto& hid = QtCommon::system->HIDCore();
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    bool pressed = false;
+    for (const auto& row : overlay_rows) {
+        if (row.pad == 0 || row.player < 0 || row.player >= 8) {
+            continue;
+        }
+        const int i = row.player;
+        // Another controller took the player: its history starts over
+        if (row.flash == 1 && row.flash_since != press_history_since[i]) {
+            press_history_since[i] = row.flash_since;
+            press_history[i].clear();
+            pressed = true;
+        }
+        const auto& player = Settings::values.players.GetValue()[i];
+        auto* controller = i == 0 && player.controller_type == Settings::ControllerType::Handheld
+                               ? hid.GetEmulatedController(Core::HID::NpadIdType::Handheld)
+                               : hid.GetEmulatedControllerByIndex(i);
+        if (!controller) {
+            continue;
+        }
+        const auto values = controller->GetButtonsValues();
+        auto& down = buttons_down[i];
+        for (int b = 0; b < Settings::NativeButton::NumButtons; ++b) {
+            const bool held = values[b].value;
+            if (held && !down[b]) {
+                auto& history = press_history[i];
+                history.push_back({b, now_ms});
+                if (history.size() > 10) {
+                    history.pop_front();
+                }
+                pressed = true;
+            }
+            down[b] = held;
+        }
+    }
+    return pressed;
 }
 
 void MainWindow::ApplyConsoleControllerMode() {
@@ -2556,6 +2776,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             pad_identity.clear();
             pad_sets.clear();
             slot_set = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+            set_before_profile.clear();
             LOG_INFO(Frontend, "console-mode: left, the user's players are restored");
             if (QtCommon::system && QtCommon::system->IsPoweredOn()) {
                 QtCommon::system->HIDCore().ReloadInputDevices();
@@ -3132,21 +3353,31 @@ void MainWindow::ApplyConsoleControllerMode() {
     // Profiles picked in the Controls page: their mappings go on the set the player's
     // controller carries (part of the user's own setup, so they are kept), on its device
     {
-        std::vector<std::pair<int, std::string>> picks;
+        std::vector<Common::ControllerConsoleState::ProfileRequest> picks;
         {
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
             picks.swap(state.profile_requests);
         }
         std::optional<InputProfiles> input_profiles;
-        for (const auto& [player, name] : picks) {
+        for (const auto& [player, name, restore] : picks) {
             if (!console_profile || player < 0 || player >= static_cast<int>(players.size())) {
                 continue;
             }
             const int set = slot_set[player];
             const bool game_set = game_profiles && !(*game_profiles)[set].profile_name.empty();
             auto& target = game_set ? (*game_profiles)[set] : (*console_profile)[set];
+            if (name.empty() && restore) {
+                if (const auto before = set_before_profile.find(set);
+                    before != set_before_profile.end()) {
+                    target.buttons = before->second.buttons;
+                    target.analogs = before->second.analogs;
+                    target.motions = before->second.motions;
+                    set_before_profile.erase(before);
+                }
+            }
             if (!name.empty()) {
+                set_before_profile.try_emplace(set, target);
                 if (!input_profiles) {
                     input_profiles.emplace();
                 }

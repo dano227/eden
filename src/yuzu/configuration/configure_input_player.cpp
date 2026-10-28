@@ -1017,7 +1017,7 @@ std::string MappingKey(const std::string& raw) {
 void RequestProfile(std::size_t player, const QString& name) {
     auto& state = Common::GetControllerConsoleState();
     std::scoped_lock lock{state.mutex};
-    state.profile_requests.emplace_back(static_cast<int>(player), name.toStdString());
+    state.profile_requests.push_back({static_cast<int>(player), name.toStdString()});
 }
 
 /// The box layout that holds a widget, searched from a top layout down
