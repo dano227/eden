@@ -2246,6 +2246,8 @@ void MainWindow::ApplyConsoleControllerMode() {
     // identity there. Steam fills it in a moment after a virtual pad appears: until then the
     // pad is not live yet (3 seconds at most, then its GUID identity has to do).
     std::map<u32, std::string> live;
+    /// Under Steam: real devices unhidden for their motion (never players)
+    std::vector<u32> motion_devices;
     {
         static std::map<u32, std::chrono::steady_clock::time_point> first_seen;
         const auto now = std::chrono::steady_clock::now();
@@ -2258,8 +2260,9 @@ void MainWindow::ApplyConsoleControllerMode() {
             present.insert(id);
             first_seen.try_emplace(id, now);
             if (LaunchedThroughSteam() && !IsSteamVirtualPad(id)) {
-                // PROBE: a real device next to Steam's virtual pads (unhidden for its motion):
-                // never a player; log it once, with the virtual pads of the same model
+                // A real device next to Steam's virtual pads, unhidden for its motion: never a
+                // player; logged once, with the virtual pads of the same model
+                motion_devices.push_back(id);
                 static std::set<u32> probed;
                 if (probed.insert(id).second) {
                     std::string twins;
@@ -2273,8 +2276,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                         }
                     }
                     LOG_INFO(Frontend,
-                             "console-mode: PROBE real device inst={} {:04x}:{:04x} name={} "
-                             "gyro={} path={} pairs with virtual inst=[{}]",
+                             "console-mode: real device inst={} {:04x}:{:04x} name={} "
+                             "gyro={} path={} same model as virtual inst=[{}]",
                              id, vendor, product, PadName(id).toStdString(), PadHasGyro(id),
                              PadPath(id).toStdString(), twins);
                 }
@@ -3069,7 +3072,40 @@ void MainWindow::ApplyConsoleControllerMode() {
             want.analogs = own.analogs;
             want.motions = own.motions;
             RouteSdlBindings(want, binding->first, binding->second);
-            if (!is_builtin) {
+            // Under Steam the virtual pad has no motion: take the paired real device's. The
+            // deck's own controller is unique (28DE:1205); another model pairs when only one
+            // of it is connected (the virtual pad reports the real controller's ids).
+            u32 motion_source = 0;
+            if (LaunchedThroughSteam()) {
+                const Uint16 vendor = is_builtin ? 0x28DE : SDL_GetJoystickVendorForID(id);
+                const Uint16 product = is_builtin ? 0x1205 : SDL_GetJoystickProductForID(id);
+                const auto same_model = [vendor, product](u32 other) {
+                    return SDL_GetJoystickVendorForID(other) == vendor &&
+                           SDL_GetJoystickProductForID(other) == product;
+                };
+                const auto real = std::count_if(motion_devices.begin(), motion_devices.end(),
+                                                same_model);
+                const auto virtuals = std::count_if(live.begin(), live.end(), [&](const auto& e) {
+                    return same_model(e.first);
+                });
+                if (real == 1 && (is_builtin || virtuals == 1)) {
+                    const u32 device =
+                        *std::find_if(motion_devices.begin(), motion_devices.end(), same_model);
+                    if (PadHasGyro(device)) {
+                        motion_source = device;
+                    }
+                }
+            }
+            if (motion_source != overlay_motion_source[slot]) {
+                overlay_motion_source[slot] = motion_source;
+                LOG_INFO(Frontend, "console-mode: P{} motion from real device inst={}", slot + 1,
+                         motion_source);
+            }
+            if (motion_source) {
+                if (const auto source = input_subsystem->GetSDLBinding(motion_source)) {
+                    want.motions.fill(SdlMotionParam(source->first, source->second));
+                }
+            } else if (!is_builtin) {
                 for (std::string& motion : want.motions) {
                     if (is_handheld_motion(motion)) {
                         motion.clear();
