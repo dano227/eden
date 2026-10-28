@@ -699,8 +699,8 @@ bool IsMotionController(unsigned vendor, unsigned product) {
     }
 }
 
-/// PROBE: under Steam, take the motion controllers off Steam's hide list, so SDL also opens
-/// the real devices (for their motion) next to Steam's virtual pads
+/// Under Steam, takes the motion controllers off Steam's hide list, so SDL also opens the real
+/// devices (for their motion) next to Steam's sensorless virtual pads
 void UnhideMotionControllers() {
     if (!std::getenv("SteamGameId") && !std::getenv("SteamAppId")) {
         return;
@@ -733,14 +733,8 @@ void UnhideMotionControllers() {
     if (!kept.empty()) {
         kept.pop_back();
     }
-    LOG_INFO(Input, "PROBE steam hide list ({}): {}", env ? "set" : "unset", list);
-    LOG_INFO(Input, "PROBE unhidden motion controllers: {}", dropped);
-    LOG_INFO(Input, "PROBE ignore-except={} hidapi-steamdeck={}",
-             std::getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT")
-                 ? std::getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT")
-                 : "(unset)",
-             std::getenv("SDL_JOYSTICK_HIDAPI_STEAMDECK") ? std::getenv("SDL_JOYSTICK_HIDAPI_STEAMDECK")
-                                                          : "(unset)");
+    LOG_INFO(Input, "Steam Input: opening motion controllers for their sensors: {}",
+             dropped.empty() ? std::string{"none hidden"} : dropped);
     SDL_SetHintWithPriority(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, kept.c_str(),
                             SDL_HINT_OVERRIDE);
     SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK, "1", SDL_HINT_OVERRIDE);

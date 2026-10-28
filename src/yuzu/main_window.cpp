@@ -1679,8 +1679,8 @@ bool PadHasGyro(SDL_JoystickID id) {
 }
 
 /// Asks the Steam Deck's own controller to report its motion sensors. Steam Input turns them
-/// on only while its layout uses the gyro, so this repeats the settings report that
-/// SteamDeckGyroDSU (MIT) sends: IMU mode 0x18, both trackpads at 7 (as Steam keeps them),
+/// on only while its layout uses the gyro, so this sends the controller's settings report
+/// (0x87): IMU mode (0x30) = 0x18, both trackpads (0x07, 0x08) at 7 as Steam keeps them,
 /// 0x31 = 2, 0x18 = 0.
 bool EnableDeckMotion(const QString& path) {
 #ifdef __linux__
@@ -2323,6 +2323,28 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
         SDL_free(ids);
         std::erase_if(first_seen, [&present](const auto& e) { return !present.contains(e.first); });
+    }
+
+    // The deck's own controller only reports motion while its IMU is on, which Steam Input
+    // leaves off unless its layout uses the gyro: keep it on while the real device is open,
+    // so its motion is there whenever the deck holds a player
+    {
+        const auto deck = std::find_if(motion_devices.begin(), motion_devices.end(), [](u32 id) {
+            return SDL_GetJoystickVendorForID(id) == 0x28DE &&
+                   SDL_GetJoystickProductForID(id) == 0x1205;
+        });
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        if (deck != motion_devices.end() && now_ms - deck_motion_sent_at >= 3000) {
+            deck_motion_sent_at = now_ms;
+            const QString path = PadPath(*deck);
+            const bool sent = EnableDeckMotion(path);
+            static bool logged = false;
+            if (!sent || !logged) {
+                logged = true;
+                LOG_INFO(Frontend, "console-mode: deck motion on via {}: {}", path.toStdString(),
+                         sent ? "sent" : "failed");
+            }
+        }
     }
 
     // A controller Steam moved to another virtual pad takes its slot and its handheld latch
@@ -3121,21 +3143,6 @@ void MainWindow::ApplyConsoleControllerMode() {
                         *std::find_if(motion_devices.begin(), motion_devices.end(), same_model);
                     if (PadHasGyro(device)) {
                         motion_source = device;
-                    }
-                }
-            }
-            // The deck's own controller only reports motion while its IMU is on: keep it on
-            if (motion_source && is_builtin) {
-                const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
-                if (now_ms - deck_motion_sent_at >= 3000) {
-                    deck_motion_sent_at = now_ms;
-                    const QString path = PadPath(motion_source);
-                    const bool sent = EnableDeckMotion(path);
-                    static int logged = 0;
-                    if (!sent || logged < 1) {
-                        ++logged;
-                        LOG_INFO(Frontend, "console-mode: deck motion on via {}: {}",
-                                 path.toStdString(), sent ? "sent" : "failed");
                     }
                 }
             }
