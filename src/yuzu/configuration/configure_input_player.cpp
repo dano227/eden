@@ -963,13 +963,21 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                          "QGroupBox { border: 1px solid palette(mid); border-radius: 8px; "
                          "margin-top: 1.1em; padding-bottom: 5px; "
                          "background: palette(alternate-base); }"
-                         "QGroupBox::title { subcontrol-origin: margin; left: 8px; "
-                         "padding: 0 3px; font-weight: bold; }"
+                         "QGroupBox::title { subcontrol-origin: margin; "
+                         "subcontrol-position: top center; padding: 0 3px; }"
                          "QGroupBox QGroupBox { border: none; background: transparent; "
                          "padding-bottom: 0px; }"
-                         // The label above a button is centred over it, in the cards and on
-                         // the single-button boxes
-                         "QGroupBox QGroupBox::title, "
+                         "QGroupBox QGroupBox::title { padding: 0px; }"
+                         // The single-button boxes carry their label inside, above the button
+                         "QGroupBox#buttonShoulderButtonsButtonZLGroup, "
+                         "QGroupBox#buttonShoulderButtonsButtonLGroup, "
+                         "QGroupBox#buttonMiscButtonsMinusGroup, "
+                         "QGroupBox#buttonMiscButtonsPlusGroup, "
+                         "QGroupBox#buttonShoulderButtonsZRGroup, "
+                         "QGroupBox#buttonShoulderButtonsRGroup, "
+                         "QGroupBox#buttonMiscButtonsHomeGroup, "
+                         "QGroupBox#buttonMiscButtonsScreenshotGroup { margin-top: 0px; "
+                         "padding-top: 1.3em; }"
                          "QGroupBox#buttonShoulderButtonsButtonZLGroup::title, "
                          "QGroupBox#buttonShoulderButtonsButtonLGroup::title, "
                          "QGroupBox#buttonMiscButtonsMinusGroup::title, "
@@ -978,8 +986,8 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                          "QGroupBox#buttonShoulderButtonsRGroup::title, "
                          "QGroupBox#buttonMiscButtonsHomeGroup::title, "
                          "QGroupBox#buttonMiscButtonsScreenshotGroup::title { "
-                         "subcontrol-position: top center; left: 0px; padding: 0px; "
-                         "font-weight: normal; }"
+                         "subcontrol-origin: padding; subcontrol-position: top center; "
+                         "top: 3px; padding: 0px; }"
                          "QPushButton { border: 1px solid palette(mid); border-radius: 6px; "
                          "padding: 2px 6px; background: palette(base); }"
                          "QPushButton:hover { border-color: palette(highlight); }"
@@ -987,8 +995,40 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                          "background: palette(highlight); color: palette(highlighted-text); }") +
                          ConfigurePlayerAssignment::ModernComboStyle()
                    : QString{});
+        if (!locked) {
+            // Back to the inherited fonts
+            for (QGroupBox* box : bolded_boxes) {
+                if (box) {
+                    box->setFont(QFont());
+                    for (QWidget* child :
+                         box->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+                        child->setFont(QFont());
+                    }
+                }
+            }
+            bolded_boxes.clear();
+        }
         if (locked) {
             ConfigurePlayerAssignment::ModernizeCombos(this);
+            // The section titles are bold (a style sheet cannot bold only a title: the box's
+            // font is bold and everything in it goes back to normal)
+            QFont normal = font();
+            QFont bold = normal;
+            bold.setBold(true);
+            for (QGroupBox* box : findChildren<QGroupBox*>()) {
+                const bool section = qobject_cast<QGroupBox*>(box->parentWidget()) == nullptr &&
+                                     !box->objectName().startsWith(QStringLiteral("buttonMisc")) &&
+                                     !box->objectName().startsWith(
+                                         QStringLiteral("buttonShoulderButtons"));
+                if (!section) {
+                    continue;
+                }
+                box->setFont(bold);
+                for (QWidget* child : box->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+                    child->setFont(normal);
+                }
+                bolded_boxes.push_back(box);
+            }
             // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
             // trigger slider is below)
             for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
@@ -1188,6 +1228,13 @@ void ConfigureInputPlayer::BuildProfileCard() {
 
     if (auto* layout = LayoutHolding(this->layout(), ui->profilesGroup)) {
         layout->insertWidget(layout->indexOf(ui->profilesGroup) + 1, profile_card, 1);
+    }
+    // A bold title like the other sections, with its contents in the normal font
+    QFont bold = font();
+    bold.setBold(true);
+    profile_card->setFont(bold);
+    for (QWidget* child : profile_card->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+        child->setFont(font());
     }
     profile_card->setVisible(false);
 }
