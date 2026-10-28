@@ -267,18 +267,33 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                     if (player_tab_titles[i].isEmpty()) {
                         player_tab_titles[i] = tabs->tabText(index);
                     }
-                    tabs->setTabVisible(index, shown);
-                    tabs->tabBar()->setTabTextColor(index, label);
+                    // Only what changed: each of these lays the tab bar out again, and done every
+                    // pass that shook it under the Midnight Blue themes
+                    const auto set_text = [tabs, index](const QString& text) {
+                        if (tabs->tabText(index) != text) {
+                            tabs->setTabText(index, text);
+                        }
+                    };
+                    const auto set_tip = [tabs, index](const QString& tip) {
+                        if (tabs->tabToolTip(index) != tip) {
+                            tabs->setTabToolTip(index, tip);
+                        }
+                    };
+                    if (tabs->isTabVisible(index) != shown) {
+                        tabs->setTabVisible(index, shown);
+                    }
+                    if (tabs->tabBar()->tabTextColor(index) != label) {
+                        tabs->tabBar()->setTabTextColor(index, label);
+                    }
                     if (!automatic) {
-                        tabs->setTabText(index, player_tab_titles[i]);
-                        tabs->setTabToolTip(index, {});
+                        set_text(player_tab_titles[i]);
+                        set_tip({});
                     } else if (shown) {
                         // The grip says the tab drags, like the Controllers tab's rows
-                        tabs->setTabText(index, QStringLiteral("\u283F P%1").arg(i + 1));
-                        tabs->setTabToolTip(
-                            index, tr("P%1: %2\nDrag left or right to change the player order")
-                                       .arg(i + 1)
-                                       .arg(QString::fromStdString(row->name)));
+                        set_text(QStringLiteral("\u283F P%1").arg(i + 1));
+                        set_tip(tr("P%1: %2\nDrag left or right to change the player order")
+                                    .arg(i + 1)
+                                    .arg(QString::fromStdString(row->name)));
                     }
                 }
             }
@@ -306,13 +321,14 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             // The Midnight Blue themes give a hovered tab a 1-pixel border on three sides and
             // narrow its padding: the tab and the whole tab bar change size, the page below
             // moves, and with the hover lost it moves back, shaking. A hovered tab keeps its
-            // size: their padding (8 at the sides, 2 on top) less that border. (Every page of
-            // the settings dialog shares this tab bar.)
+            // size: their padding (8 at the sides, 2 above and below) less that border (the
+            // bottom one grows from 2 to 3). (Every page of the settings dialog shares this bar.)
             const bool midnight =
                 QString::fromStdString(UISettings::values.theme).contains(QStringLiteral("midnight"));
             const QString steady =
                 midnight ? QStringLiteral("QTabBar::tab:top:!selected:hover { padding-left: 7px; "
-                                          "padding-right: 7px; padding-top: 1px; }")
+                                          "padding-right: 7px; padding-top: 1px; "
+                                          "padding-bottom: 1px; }")
                          : QString{};
             if (bar->styleSheet() != steady) {
                 bar->setStyleSheet(steady);
@@ -328,9 +344,13 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                                  ? QColor(0x19, 0x23, 0x2D)
                                  : QColor(0x31, 0x36, 0x3B));
                 }
-                tab_overlay->setGeometry(bar->rect());
-                tab_overlay->lower();
-                tab_overlay->show();
+                if (tab_overlay->geometry() != bar->rect()) {
+                    tab_overlay->setGeometry(bar->rect());
+                }
+                if (!tab_overlay->isVisible()) {
+                    tab_overlay->lower();
+                    tab_overlay->show();
+                }
                 tab_overlay->update();
             } else if (tab_overlay) {
                 tab_overlay->hide();
@@ -338,9 +358,12 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             // A player tab's colour is what makes it a bubble: none outside these modes
             for (std::size_t i = 0; i < player_tabs.size(); ++i) {
                 if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
-                    bar->setTabData(index, pills ? QVariant(ConfigurePlayerAssignment::PlayerColor(
-                                                       static_cast<int>(i)))
-                                                 : QVariant{});
+                    const QVariant data =
+                        pills ? QVariant(ConfigurePlayerAssignment::PlayerColor(static_cast<int>(i)))
+                              : QVariant{};
+                    if (bar->tabData(index) != data) {
+                        bar->setTabData(index, data);
+                    }
                 }
             }
             if (tabs != drag_tabs) {
