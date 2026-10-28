@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "common/settings.h"
+#include "qt_common/config/uisettings.h"
 #include "common/settings_enums.h"
 #include "core/core.h"
 #include "core/hle/service/am/am.h"
@@ -300,6 +301,19 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             } else if (!pills && pill_bar == bar) {
                 bar->setStyle(nullptr);
                 pill_bar = nullptr;
+            }
+            // The Midnight Blue themes narrow a hovered tab, which then leaves the cursor, widens
+            // back under it and shakes: a hovered tab keeps its width (their 8 pixels of padding
+            // less the 1-pixel border they add)
+            const bool midnight =
+                QString::fromStdString(UISettings::values.theme).contains(QStringLiteral("midnight"));
+            const QString steady =
+                midnight && controls_page
+                    ? QStringLiteral("QTabBar::tab:top:!selected:hover { padding-left: 7px; "
+                                     "padding-right: 7px; }")
+                    : QString{};
+            if (bar->styleSheet() != steady) {
+                bar->setStyleSheet(steady);
             }
             // A player tab's colour is what makes it a bubble: none outside these modes
             for (std::size_t i = 0; i < player_tabs.size(); ++i) {
@@ -632,6 +646,10 @@ void ConfigureInput::UpdateTabArrows() {
                 button->setArrowType(arrow);
                 button->setAutoRaise(true);
                 button->setFixedSize(16, 16);
+                // The size a style sheet reports is the size the tab makes room for (the dark
+                // themes say 12 pixels, and the tab text went under the buttons)
+                button->setStyleSheet(QStringLiteral("QToolButton { width: 16px; height: 16px; "
+                                                     "padding: 0px; }"));
                 connect(button, &QToolButton::clicked, this, [this, player, step] {
                     SwapPlayers(player, player + step);
                     pending_select = player + step;
