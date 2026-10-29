@@ -445,11 +445,14 @@ protected:
         const auto chip = [&](const Common::ControllerConsoleState::PlayerRow& row, QRectF rect,
                               int k) {
             const QColor color = ConfigurePlayerAssignment::PlayerColor(row.player);
-            // Filled while its controller has an input held, else an outline
-            const bool lit = row.active;
+            // Filled while its controller has an input held, else an outline; blinking green
+            // a moment when another controller takes the player (a swap)
+            const qint64 since = QDateTime::currentMSecsSinceEpoch() - row.flash_since;
+            const bool blink = row.flash == 1 && since < 1500 && (since / 125) % 2 == 0;
+            const bool lit = row.active || blink;
             if (lit) {
                 painter.setPen(Qt::NoPen);
-                painter.setBrush(color);
+                painter.setBrush(blink ? QColor(45, 160, 80) : color);
             } else {
                 painter.setPen(QPen(color, 1.5));
                 painter.setBrush(Qt::NoBrush);
@@ -559,10 +562,12 @@ protected:
             if (step != 0) {
                 const int other = index + step;
                 if (other >= 0 && other < static_cast<int>(rows.size())) {
+                    const int a = rows[static_cast<std::size_t>(index)].player;
+                    const int b = rows[static_cast<std::size_t>(other)].player;
+                    LOG_INFO(Frontend, "console-mode: menu chip swap P{} <-> P{}", a + 1, b + 1);
                     auto& state = Common::GetControllerConsoleState();
                     std::scoped_lock lock{state.mutex};
-                    state.swap_requests.emplace_back(rows[static_cast<std::size_t>(index)].player,
-                                                     rows[static_cast<std::size_t>(other)].player);
+                    state.swap_requests.emplace_back(a, b);
                 }
                 return;
             }
@@ -670,11 +675,17 @@ private:
         if (isVisible() != shown) {
             setVisible(shown);
         }
-        // Repainted when a player or its input changes (not while one is being dragged)
+        // Repainted when a player, its input or its controller changes, and while one blinks
+        // (not while one is being dragged)
         const auto same = [](const auto& a, const auto& b) {
-            return a.player == b.player && a.active == b.active && a.name == b.name;
+            return a.player == b.player && a.active == b.active && a.name == b.name &&
+                   a.flash == b.flash && a.flash_since == b.flash_since;
         };
-        if (!dragging && (now.size() != rows.size() ||
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        const bool blinking = std::any_of(now.begin(), now.end(), [now_ms](const auto& r) {
+            return r.flash != 0 && now_ms - r.flash_since < 1600;
+        });
+        if (!dragging && (blinking || now.size() != rows.size() ||
                           !std::equal(now.begin(), now.end(), rows.begin(), same))) {
             rows = std::move(now);
             update();

@@ -1076,15 +1076,18 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
             if (QLayout* connect = ui->groupConnectedController->layout()) {
                 connect->setAlignment(ui->comboControllerType, Qt::AlignTop);
             }
-            // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
-            // trigger slider is below): a stretch under each button keeps it there
+            // L, R, Minus and Plus line up with ZL and ZR: under the button, a fixed space the
+            // size of ZL's trigger slider (and its spacing), so all six boxes hold the same
             if (!shoulders_raised) {
                 shoulders_raised = true;
+                const int slider = ui->sliderZLThreshold->sizeHint().height();
                 for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
                                             ui->buttonPlus}) {
                     if (auto* box = qobject_cast<QBoxLayout*>(
                             button->parentWidget() ? button->parentWidget()->layout() : nullptr)) {
-                        box->addStretch(1);
+                        box->addSpacerItem(new QSpacerItem(0, slider + box->spacing(),
+                                                           QSizePolicy::Minimum,
+                                                           QSizePolicy::Fixed));
                     }
                 }
             }
