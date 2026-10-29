@@ -1051,6 +1051,11 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                 ui->miscButtons->setStretch(0, 1);
                 ui->miscButtons->addStretch(1);
             }
+            // Connect Controller's drop-down sits at the top of its box, level with the
+            // Mapping Profile card's beside it
+            if (QLayout* connect = ui->groupConnectedController->layout()) {
+                connect->setAlignment(Qt::AlignTop);
+            }
             // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
             // trigger slider is below)
             for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
@@ -1154,7 +1159,9 @@ void ConfigureInputPlayer::BuildProfileCard() {
     card_profiles = new QComboBox(profile_card);
     card_profiles->setPlaceholderText(tr("No profile"));
     ConfigurePlayerAssignment::ModernizeCombos(profile_card);
+    // As wide as a profile name needs: the rest of the row is the profile's buttons and status
     card_profiles->setMinimumWidth(160);
+    card_profiles->setMaximumWidth(260);
     card_profiles->setToolTip(tr("Picking a profile applies it to this player at once."));
     card_save = new QPushButton(tr("Save"), profile_card);
     card_save->setDefault(false);
@@ -1171,14 +1178,17 @@ void ConfigureInputPlayer::BuildProfileCard() {
     card_remove->setText(QStringLiteral("\u2715"));
     card_remove->setToolTip(tr("Remove the profile from this player"));
     card_remove->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
-    row->addWidget(card_profiles, 1);
+    // One row, like Connect Controller beside it: the drop-downs line up
+    row->addWidget(card_profiles);
     row->addWidget(card_remove);
     row->addWidget(card_save);
     row->addWidget(card_more);
-    column->addLayout(row);
     card_status = new QLabel(profile_card);
     card_status->setWordWrap(true);
-    column->addWidget(card_status);
+    row->addSpacing(8);
+    row->addWidget(card_status, 1);
+    column->addLayout(row);
+    column->addStretch(1);
 
     auto* menu = new QMenu(card_more);
     auto* save_new = menu->addAction(tr("Save as new..."));
