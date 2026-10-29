@@ -37,6 +37,7 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, console_history_size, QString(), QString());
     INSERT(Settings, console_history_seconds, QString(), QString());
     INSERT(Settings, console_history_gaps, QString(), QString());
+    INSERT(Settings, console_debug_probes, QString(), QString());
     INSERT(Settings, modern_seat_profiles, QString(), QString());
     INSERT(Settings, builtin_pad_identity, QString(), QString());
     INSERT(Settings, builtin_pad_steam_handle, QString(), QString());

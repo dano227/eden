@@ -665,6 +665,20 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
             [](bool shown) { Settings::values.console_hints.SetValue(shown); });
     layout->addWidget(display);
 
+    // Logging for bug reports
+    auto* debug = new QGroupBox(tr("Troubleshooting"), this);
+    debug_box = debug;
+    auto* debug_layout = new QVBoxLayout(debug);
+    probes_toggle = add_switch_to(debug_layout, tr("Debug Probes"),
+                                  tr("Writes detailed controller traces to the log several times "
+                                     "a second, for bug reports. Connected controllers are "
+                                     "always described in the log."));
+    original_probes = Settings::values.console_debug_probes.GetValue();
+    probes_toggle->setChecked(original_probes);
+    connect(probes_toggle, &QAbstractButton::toggled, this,
+            [](bool on) { Settings::values.console_debug_probes.SetValue(on); });
+    layout->addWidget(debug);
+
     // A short word on the two automatic modes, last on the page
     auto* about = new QGroupBox(tr("How It Works"), this);
     about_box = about;
@@ -724,6 +738,7 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
         Settings::values.console_history_size.SetValue(original_history_size);
         Settings::values.console_history_seconds.SetValue(original_history_seconds);
         Settings::values.console_history_gaps.SetValue(original_history_gaps);
+        Settings::values.console_debug_probes.SetValue(original_probes);
     }
 }
 
@@ -795,6 +810,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     now_box->setVisible(automatic);
     display_box->setVisible(automatic);
     about_box->setVisible(automatic);
+    debug_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }

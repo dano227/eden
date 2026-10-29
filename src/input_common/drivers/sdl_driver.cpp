@@ -569,8 +569,10 @@ void SDLDriver::InitJoystick(SDL_JoystickID joystick_id) {
 
     if (joystick_it != joystick_guid_list.end()) {
         const int port = static_cast<int>(joystick_it - joystick_guid_list.begin());
-        LOG_INFO(Input, "input: attach guid={} port={} name={} (reusing a freed slot)",
-                 guid.RawString(), port, SDL_GetJoystickName(sdl_joystick));
+        if (Settings::values.console_debug_probes.GetValue()) {
+            LOG_INFO(Input, "input: attach guid={} port={} name={} (reusing a freed slot)",
+                     guid.RawString(), port, SDL_GetJoystickName(sdl_joystick));
+        }
         (*joystick_it)->SetSDLJoystick(sdl_joystick, sdl_gamecontroller);
         (*joystick_it)->EnableMotion();
         SetBattery((*joystick_it)->GetPadIdentifier(),
@@ -599,8 +601,10 @@ void SDLDriver::CloseJoystick(SDL_Joystick* sdl_joystick) {
                                           });
 
     if (joystick_it != joystick_guid_list.end()) {
-        LOG_INFO(Input, "input: detach guid={} port={}", guid.RawString(),
-                 static_cast<int>(joystick_it - joystick_guid_list.begin()));
+        if (Settings::values.console_debug_probes.GetValue()) {
+            LOG_INFO(Input, "input: detach guid={} port={}", guid.RawString(),
+                     static_cast<int>(joystick_it - joystick_guid_list.begin()));
+        }
         (*joystick_it)->SetSDLJoystick(nullptr, nullptr);
     }
 }
@@ -716,6 +720,10 @@ std::set<u32>& UnhiddenControllers() {
 /// its gamepad, so SDL never sees it. Read-only.
 void LogMotionHardware() {
 #ifdef __linux__
+    // (Debug Probes)
+    if (!Settings::values.console_debug_probes.GetValue()) {
+        return;
+    }
     namespace fs = std::filesystem;
     const auto read_line = [](const fs::path& path) {
         std::ifstream file{path};
@@ -813,8 +821,10 @@ void UnhideMotionControllers() {
     if (!kept.empty()) {
         kept.pop_back();
     }
-    LOG_INFO(Input, "Steam Input: opening motion controllers for their sensors: {}",
-             dropped.empty() ? std::string{"none hidden"} : dropped);
+    if (Settings::values.console_debug_probes.GetValue()) {
+        LOG_INFO(Input, "Steam Input: opening motion controllers for their sensors: {}",
+                 dropped.empty() ? std::string{"none hidden"} : dropped);
+    }
     SDL_SetHintWithPriority(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, kept.c_str(),
                             SDL_HINT_OVERRIDE);
     SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK, "1", SDL_HINT_OVERRIDE);

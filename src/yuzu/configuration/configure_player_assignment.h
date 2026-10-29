@@ -106,6 +106,10 @@ private:
     int original_history_size = 10;
     int original_history_seconds = 5;
     bool original_history_gaps = false;
+    /// Debug Probes, in the Troubleshooting card
+    QWidget* debug_box = nullptr;
+    QAbstractButton* probes_toggle = nullptr;
+    bool original_probes = false;
     QWidget* now_box = nullptr;
 
     QWidget* builtin_row = nullptr;

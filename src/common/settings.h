@@ -223,6 +223,10 @@ struct Values {
         linkage, 5, 1, 30, "console_history_seconds", Category::LibraryApplet};
     SwitchableSetting<bool> console_history_gaps{linkage, false, "console_history_gaps",
                                                  Category::LibraryApplet};
+    /// Detailed controller traces in the log (every assignment tick), for bug reports. The
+    /// devices are described either way (what adding a handheld to the allowlist needs).
+    SwitchableSetting<bool> console_debug_probes{linkage, false, "console_debug_probes",
+                                                 Category::LibraryApplet};
 
     /// True when the user declared the handheld's own pad by hand (the picker or the
     /// Identify button); the auto latch must not overwrite it
