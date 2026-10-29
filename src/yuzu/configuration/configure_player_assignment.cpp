@@ -523,8 +523,12 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     steam_layout->addWidget(steam_switch, 0, Qt::AlignVCenter);
     original_bypass = Settings::values.console_bypass_steam.GetValue();
     steam_switch->setChecked(original_bypass);
+    // (Bypass and the reader exclude each other: turning one on turns the other off)
     connect(steam_switch, &QAbstractButton::toggled, this, [this](bool on) {
         Settings::values.console_bypass_steam.SetValue(on);
+        if (on && reader_switch) {
+            reader_switch->setChecked(false);
+        }
         UpdateModeUi();
     });
 
@@ -540,7 +544,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* reader_note = new QLabel(
         tr("Reads the motion of the Steam Deck and Steam Controllers straight from the "
            "controller, so nothing competes with Steam for them. Try this if a Steam Controller "
-           "misbehaves under Steam. Not used while Bypass Steam Input is on."),
+           "misbehaves under Steam. Turns Bypass Steam Input off, and the other way round."),
         steam_box);
     reader_note->setWordWrap(true);
     reader_note->setObjectName(QStringLiteral("note"));
@@ -553,9 +557,13 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     steam_column->addLayout(reader_layout);
     steam_column->addWidget(steam_restart);
     original_reader = Settings::values.console_valve_reader.GetValue();
-    reader_switch->setChecked(original_reader);
+    // (Both on, from before they excluded each other: Bypass wins, as in the engine)
+    reader_switch->setChecked(original_reader && !original_bypass);
     connect(reader_switch, &QAbstractButton::toggled, this, [this](bool on) {
         Settings::values.console_valve_reader.SetValue(on);
+        if (on) {
+            steam_switch->setChecked(false);
+        }
         UpdateModeUi();
     });
 #ifndef __linux__
@@ -856,7 +864,6 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     steam_panel->setVisible(handler_group->checkedId() == HandlerModern &&
                             Common::RunningUnderSteam());
     // (The reader only runs without Bypass Steam Input)
-    reader_switch->setEnabled(!steam_switch->isChecked());
     const bool reader_wanted = reader_switch->isChecked() && !steam_switch->isChecked();
     steam_restart->setVisible(steam_switch->isChecked() !=
                                   Common::GetControllerConsoleState().steam_bypassed ||
