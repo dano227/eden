@@ -3428,6 +3428,15 @@ void MainWindow::LearnBluetoothPads() {
     for (const auto& [model, pads] : by_model) {
         std::vector<RealController> controllers = ControllersOfModel(model.first, model.second);
         std::erase_if(controllers, [&](const auto& c) { return taken.contains(c.address); });
+        // The last of its model left to tell apart: that one is it
+        if (pads.size() == 1 && controllers.size() == 1) {
+            const u32 id = pads[0];
+            pad_bluetooth[id] = controllers[0].bluetooth ? controllers[0].address : std::string{};
+            pad_bt_pending.erase(id);
+            LOG_INFO(Frontend, "console-mode: inst={} is the last of its model: bluetooth={}", id,
+                     controllers[0].bluetooth ? controllers[0].address : std::string{"no"});
+            continue;
+        }
         std::vector<u32> pressed_pads;
         for (const u32 id : pads) {
             if (PadAnyButtonPressed(id)) {
@@ -3715,6 +3724,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                 pad_identity.erase(inst);
             }
             u32 new_builtin = builtin_pad_id;
+            const std::set<u32> benched_before = benched_pads;
+            const std::map<u32, std::string> bluetooth_before = pad_bluetooth;
+            const std::set<u32> pending_before = pad_bt_pending;
             for (const auto& [to, from] : moves) {
                 const auto slot = old_slot.find(from);
                 LOG_INFO(Frontend, "console-mode: Steam moved {} from inst={} to inst={} (P{})",
@@ -3726,14 +3738,21 @@ void MainWindow::ApplyConsoleControllerMode() {
                 if (builtin_pad_id == from) {
                     new_builtin = to;
                 }
-                if (benched_pads.erase(from)) {
+                // (From the state before the moves: two pads can trade instances)
+                if (benched_before.contains(from)) {
                     benched_pads.insert(to);
+                } else {
+                    benched_pads.erase(to);
                 }
-                if (const auto bt = pad_bluetooth.find(from); bt != pad_bluetooth.end()) {
+                if (const auto bt = bluetooth_before.find(from); bt != bluetooth_before.end()) {
                     pad_bluetooth[to] = bt->second;
+                } else {
+                    pad_bluetooth.erase(to);
                 }
-                if (pad_bt_pending.erase(from)) {
+                if (pending_before.contains(from)) {
                     pad_bt_pending.insert(to);
+                } else {
+                    pad_bt_pending.erase(to);
                 }
             }
             builtin_pad_id = new_builtin;
