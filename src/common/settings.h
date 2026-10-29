@@ -226,6 +226,10 @@ struct Values {
     /// virtual ones. Read at startup.
     SwitchableSetting<bool> console_bypass_steam{linkage, false, "console_bypass_steam",
                                                  Category::LibraryApplet};
+    /// Experimental, under Steam in Modern Console: read the motion of Valve's controllers from
+    /// their raw reports instead of SDL opening them. Read at startup.
+    SwitchableSetting<bool> console_valve_reader{linkage, false, "console_valve_reader",
+                                                 Category::LibraryApplet};
     /// Detailed controller traces in the log (every assignment tick), for bug reports. The
     /// devices are described either way (what adding a handheld to the allowlist needs).
     SwitchableSetting<bool> console_debug_probes{linkage, false, "console_debug_probes",

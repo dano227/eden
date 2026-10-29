@@ -92,6 +92,9 @@ private:
     QAbstractButton* steam_switch = nullptr;
     QLabel* steam_restart = nullptr;
     bool original_bypass = false;
+    /// Read Valve Controllers Directly (experimental), in the same card
+    QAbstractButton* reader_switch = nullptr;
+    bool original_reader = false;
     QLabel* mode_info = nullptr;
     QWidget* display_box = nullptr;
     QWidget* about_box = nullptr;

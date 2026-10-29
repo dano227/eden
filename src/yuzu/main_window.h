@@ -611,6 +611,10 @@ private:
     std::map<std::string, std::string> pad_bluetooth;
     std::set<std::string> pad_bt_pending;
     void LearnBluetoothPads();
+    /// Experimental reader: Steam's pads (by BluetoothKey) paired with the Valve controllers
+    /// read directly, by port, when identical ones need a button press to tell apart
+    std::map<std::string, std::size_t> valve_pairs;
+    void LearnValvePairs();
     /// connection instance -> stable identity (serial, else model GUID), for matching a
     /// returning pad that comes back under a new instance
     std::map<u32, std::string> pad_identity;

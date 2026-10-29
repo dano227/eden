@@ -23,6 +23,7 @@
 #include "common/thread.h"
 #include "common/vector_math.h"
 #include "input_common/drivers/sdl_driver.h"
+#include "input_common/drivers/valve_motion.h"
 
 namespace InputCommon {
 
@@ -824,7 +825,9 @@ void UnhideMotionControllers() {
             continue;
         }
         if (std::sscanf(entry.c_str(), "%x/%x", &vendor, &product) == 2 &&
-            IsMotionController(vendor, product)) {
+            IsMotionController(vendor, product) &&
+            // (Read directly instead, when the experimental reader runs: Steam keeps them)
+            !(ValveMotion::Enabled() && vendor == 0x28DE && ValveMotion::Family(product) != 0)) {
             dropped += entry + ',';
             UnhiddenControllers().insert(vendor << 16 | product);
             continue;

@@ -183,6 +183,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 // Input //
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
+#include "input_common/drivers/valve_motion.h"
 #include "input_common/drivers/virtual_amiibo.h"
 
 // Video Core //
@@ -2469,6 +2470,15 @@ void PadRumble(SDL_JoystickID id, Uint16 strength, Uint32 duration_ms) {
 }
 
 /// An SDL motion binding for a device, as InputCommon's own auto-mapping builds it.
+/// The motion of a Valve controller read directly (experimental reader), as a binding
+std::string ValveMotionParam(std::size_t port) {
+    Common::ParamPackage param;
+    param.Set("engine", "valvemotion");
+    param.Set("motion", 0);
+    param.Set("port", static_cast<int>(port));
+    return param.Serialize();
+}
+
 std::string SdlMotionParam(const std::string& guid, int port) {
     Common::ParamPackage param;
     param.Set("engine", "sdl");
@@ -3734,8 +3744,57 @@ void MainWindow::LearnBluetoothPads() {
 #endif
 }
 
+void MainWindow::LearnValvePairs() {
+    // Identical Valve controllers read directly: the one controller with a button held while
+    // just one of Steam's pads of its model has one held is that pad's
+    const auto devices = input_subsystem
+                             ? input_subsystem->GetValveMotionDevices()
+                             : std::vector<InputCommon::InputSubsystem::ValveMotionDevice>{};
+    if (devices.size() < 2) {
+        return;
+    }
+    std::map<int, std::vector<std::size_t>> held_ports;
+    std::map<int, int> per_family;
+    for (const auto& device : devices) {
+        const int family = InputCommon::ValveMotion::Family(device.product);
+        ++per_family[family];
+        if (device.button_held) {
+            held_ports[family].push_back(device.port);
+        }
+    }
+    std::map<int, std::vector<std::string>> held_pads;
+    {
+        const JoystickApiLock lock;
+        int count = 0;
+        SDL_JoystickID* ids = SDL_GetGamepads(&count);
+        for (int i = 0; i < count; ++i) {
+            const u32 id = ids[i];
+            if (!IsSteamVirtualPad(id) || SDL_GetJoystickVendorForID(id) != 0x28DE) {
+                continue;
+            }
+            const int family = InputCommon::ValveMotion::Family(SDL_GetJoystickProductForID(id));
+            if (family != 0 && per_family[family] > 1 && PadAnyButtonPressed(id)) {
+                held_pads[family].push_back(BluetoothKey(id));
+            }
+        }
+        SDL_free(ids);
+    }
+    for (const auto& [family, keys] : held_pads) {
+        const auto ports = held_ports.find(family);
+        if (keys.size() == 1 && ports != held_ports.end() && ports->second.size() == 1 &&
+            valve_pairs[keys.front()] != ports->second.front()) {
+            valve_pairs[keys.front()] = ports->second.front();
+            if (Common::ControllerProbes()) {
+                LOG_INFO(Frontend, "console-mode: {} paired with Valve port {} by a button press",
+                         keys.front(), ports->second.front());
+            }
+        }
+    }
+}
+
 void MainWindow::PollControllerActivity() {
     LearnBluetoothPads();
+    LearnValvePairs();
     // Input shows faster than the 250ms assignment tick: redraw only when who is active changes
     // (or while the hints and history animate)
     if (overlay_rows.empty()) {
@@ -5223,7 +5282,37 @@ void MainWindow::ApplyConsoleControllerMode() {
             // deck's own controller is unique (28DE:1205); another model pairs when only one
             // of it is connected (the virtual pad reports the real controller's ids).
             u32 motion_source = 0;
-            if (Common::SteamPadsInUse()) {
+            // Experimental: a Valve controller's motion read from its own reports, with no SDL
+            // device (Steam keeps it). The Deck, or the only one of its model, pairs as is;
+            // identical ones pair by a button press (see LearnValvePairs).
+            std::optional<std::size_t> valve_port;
+            const auto valve_devices = input_subsystem->GetValveMotionDevices();
+            if (Common::SteamPadsInUse() && !valve_devices.empty()) {
+                const Uint16 vendor = is_builtin ? 0x28DE : SDL_GetJoystickVendorForID(id);
+                const Uint16 product = is_builtin ? 0x1205 : SDL_GetJoystickProductForID(id);
+                const int family = vendor == 0x28DE ? InputCommon::ValveMotion::Family(product) : 0;
+                std::vector<std::size_t> ports;
+                for (const auto& device : valve_devices) {
+                    if (family != 0 && InputCommon::ValveMotion::Family(device.product) == family) {
+                        ports.push_back(device.port);
+                    }
+                }
+                const auto virtuals = std::count_if(live.begin(), live.end(), [&](const auto& e) {
+                    return SDL_GetJoystickVendorForID(e.first) == 0x28DE &&
+                           InputCommon::ValveMotion::Family(SDL_GetJoystickProductForID(e.first)) ==
+                               family;
+                });
+                const auto paired = valve_pairs.find(BluetoothKey(id));
+                if (ports.size() == 1 && (is_builtin || virtuals == 1)) {
+                    valve_port = ports.front();
+                } else if (paired != valve_pairs.end() &&
+                           std::find(ports.begin(), ports.end(), paired->second) != ports.end()) {
+                    valve_port = paired->second;
+                }
+            }
+            if (valve_port) {
+                want.motions.fill(ValveMotionParam(*valve_port));
+            } else if (Common::SteamPadsInUse()) {
                 const Uint16 vendor = is_builtin ? 0x28DE : SDL_GetJoystickVendorForID(id);
                 const Uint16 product = is_builtin ? 0x1205 : SDL_GetJoystickProductForID(id);
                 const auto same_model = [vendor, product](u32 other) {
@@ -5249,7 +5338,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                              slot + 1, motion_source);
                 }
             }
-            if (motion_source) {
+            if (valve_port) {
+                // (Set above)
+            } else if (motion_source) {
                 if (const auto source = input_subsystem->GetSDLBinding(motion_source)) {
                     want.motions.fill(SdlMotionParam(source->first, source->second));
                 }
