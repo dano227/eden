@@ -47,6 +47,8 @@
 #include <QEvent>
 #include <QMouseEvent>
 #include <QToolButton>
+#include <QIcon>
+#include <QPixmap>
 #include "yuzu/configuration/configure_input_player.h"
 #include "yuzu/configuration/configure_motion_touch.h"
 #include "yuzu/configuration/configure_ringcon.h"
@@ -536,6 +538,30 @@ struct TabPaint {
     QColor ink;
 };
 
+/// A chevron drawn as an icon, so it sits centred in its button (a text character sits on the
+/// font's baseline); dimmed when the button is disabled
+QIcon ChevronIcon(const QColor& ink, bool left, qreal ratio) {
+    const auto draw = [&](int alpha) {
+        QPixmap pixmap(QSize(14, 14) * ratio);
+        pixmap.setDevicePixelRatio(ratio);
+        pixmap.fill(Qt::transparent);
+        QPainter painter{&pixmap};
+        painter.setRenderHint(QPainter::Antialiasing);
+        QColor color = ink;
+        color.setAlpha(alpha);
+        painter.setPen(QPen(color, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        const qreal tip = left ? 4.5 : 9.5;
+        const qreal back = left ? 9.0 : 5.0;
+        const QPointF chevron[3] = {QPointF(back, 2.5), QPointF(tip, 7), QPointF(back, 11.5)};
+        painter.drawPolyline(chevron, 3);
+        return pixmap;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(255), QIcon::Normal);
+    icon.addPixmap(draw(80), QIcon::Disabled);
+    return icon;
+}
+
 TabPaint PaintFor(const PlayerTabLook& look, bool selected) {
     if (look.lit == 3) {
         return {true, QColor(200, 50, 50), QColor(Qt::white)};
@@ -891,19 +917,15 @@ void ConfigureInput::UpdateTabArrows() {
         if (!left || !right) {
             const auto make = [this, player](Qt::ArrowType arrow, int step) {
                 auto* button = new QToolButton;
-                // A small chevron in the text's colour: the dark themes' arrow images are large
-                // solid triangles
-                button->setText(arrow == Qt::LeftArrow ? QStringLiteral("\u2039")
-                                                       : QStringLiteral("\u203A"));
-                QFont font = button->font();
-                font.setBold(true);
-                font.setPointSizeF(font.pointSizeF() * 1.2);
-                button->setFont(font);
+                // A chevron icon in the tab's ink (set below): the dark themes' arrow images are
+                // large solid triangles
+                button->setProperty("left", arrow == Qt::LeftArrow);
+                button->setIconSize(QSize(14, 14));
                 button->setAutoRaise(true);
-                button->setFixedSize(16, 16);
+                button->setFixedSize(20, 20);
                 // The size a style sheet reports is the size the tab makes room for (the dark
                 // themes say 12 pixels, and the tab text went under the buttons)
-                button->setStyleSheet(QStringLiteral("QToolButton { width: 16px; height: 16px; "
+                button->setStyleSheet(QStringLiteral("QToolButton { width: 20px; height: 20px; "
                                                      "padding: 0px; border: none; "
                                                      "background: transparent; }"));
                 connect(button, &QToolButton::clicked, this, [this, player, step] {
@@ -928,17 +950,11 @@ void ConfigureInput::UpdateTabArrows() {
         // In the tab's ink, like the chips' arrows: white on a filled tab, else its colour
         if (const auto look = TabLook(tabs->tabBar()->tabData(index))) {
             const TabPaint paint = PaintFor(*look, index == tabs->currentIndex());
-            const QString style =
-                QStringLiteral("QToolButton { width: 16px; height: 16px; padding: 0px; "
-                               "border: none; background: transparent; color: %1; }"
-                               "QToolButton:disabled { color: rgba(%2, %3, %4, 90); }")
-                    .arg(paint.ink.name())
-                    .arg(paint.ink.red())
-                    .arg(paint.ink.green())
-                    .arg(paint.ink.blue());
             for (QToolButton* button : {left.data(), right.data()}) {
-                if (button->styleSheet() != style) {
-                    button->setStyleSheet(style);
+                if (button->property("ink").value<QColor>() != paint.ink) {
+                    button->setProperty("ink", paint.ink);
+                    button->setIcon(ChevronIcon(paint.ink, button->property("left").toBool(),
+                                                button->devicePixelRatioF()));
                 }
             }
         }

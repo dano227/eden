@@ -551,6 +551,31 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     connect(hints_toggle, &QAbstractButton::toggled, this,
             [](bool shown) { Settings::values.console_hints.SetValue(shown); });
     layout->addWidget(display);
+
+    // A short word on the two automatic modes, last on the page
+    auto* about = new QGroupBox(tr("How It Works"), this);
+    about_box = about;
+    auto* about_layout = new QVBoxLayout(about);
+    const auto add_about = [about, about_layout](const QString& title, const QString& text) {
+        auto* title_label = new QLabel(title, about);
+        QFont font = title_label->font();
+        font.setBold(true);
+        title_label->setFont(font);
+        auto* text_label = new QLabel(text, about);
+        text_label->setWordWrap(true);
+        text_label->setObjectName(QStringLiteral("note"));
+        about_layout->addWidget(title_label);
+        about_layout->addWidget(text_label);
+    };
+    add_about(tr("Modern Console"),
+              tr("Controllers are assigned like on the console: each one that connects becomes "
+                 "the next player, with nothing to set up. Players keep their own controls when "
+                 "they swap, and a profile picked for a player is used again next time."));
+    add_about(tr("Handheld Console"),
+              tr("For a handheld PC with built-in controls. The same as Modern Console, but the "
+                 "built-in controls always come last: connect a controller and it becomes "
+                 "Player 1, so a docked handheld plays like a console."));
+    layout->addWidget(about);
     layout->addStretch(1);
 
     // The mode applies at once, so the players switch while the dialog is open; closing it
@@ -652,6 +677,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     }
     now_box->setVisible(automatic);
     display_box->setVisible(automatic);
+    about_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();
 }

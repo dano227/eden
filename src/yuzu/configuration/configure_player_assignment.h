@@ -86,6 +86,7 @@ private:
     QAbstractButton* handheld_switch = nullptr;
     QLabel* mode_info = nullptr;
     QWidget* display_box = nullptr;
+    QWidget* about_box = nullptr;
     /// The scrolled page the cards stack in
     QVBoxLayout* content_layout = nullptr;
     QAbstractButton* overlay_toggle = nullptr;
