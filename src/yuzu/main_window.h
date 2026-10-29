@@ -584,8 +584,9 @@ private:
     std::array<bool, 10> removed_off{};
     /// Each live pad's Bluetooth address ("" when it is not on Bluetooth or unknown), and the
     /// pads that may be on Bluetooth but can't be told apart from others of their model yet
-    std::map<u32, std::string> pad_bluetooth;
-    std::set<u32> pad_bt_pending;
+    /// (By the controller: its Steam handle under Steam, see BluetoothKey)
+    std::map<std::string, std::string> pad_bluetooth;
+    std::set<std::string> pad_bt_pending;
     void LearnBluetoothPads();
     /// connection instance -> stable identity (serial, else model GUID), for matching a
     /// returning pad that comes back under a new instance

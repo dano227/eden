@@ -2334,6 +2334,16 @@ Uint64 PadSteamHandle(SDL_JoystickID id) {
     return handle;
 }
 
+/// The key a pad's Bluetooth state is kept under: its Steam handle under Steam, which stays with
+/// the physical controller while Steam moves controllers between its virtual pads (read when it
+/// is needed, never from an earlier tick), otherwise the connection instance
+std::string BluetoothKey(SDL_JoystickID id) {
+    if (const Uint64 handle = PadSteamHandle(id)) {
+        return fmt::format("steamhandle:{:#x}", handle);
+    }
+    return fmt::format("inst:{}", id);
+}
+
 /// How a pad is stored as the handheld's (or as the removed one): its Steam handle under Steam,
 /// else its identity
 std::string PadKey(SDL_JoystickID id, const std::string& ident) {
@@ -3150,7 +3160,7 @@ void MainWindow::RenderControllerOverlay() {
     };
     const auto row_buttons = [&](std::size_t r, int at_y) {
         const auto& row = overlay_rows[r];
-        const auto address = pad_bluetooth.find(row.pad);
+        const auto address = pad_bluetooth.find(BluetoothKey(row.pad));
         const bool turns_off = address != pad_bluetooth.end() && !address->second.empty();
         const QString label = tr("Turn Off");
         const QString config_label = tr("Config");
@@ -3537,12 +3547,27 @@ void MainWindow::LearnBluetoothPads() {
     if (pad_bt_pending.empty()) {
         return;
     }
-    std::map<std::pair<unsigned, unsigned>, std::vector<u32>> by_model;
-    for (const u32 id : pad_bt_pending) {
-        by_model[{SDL_GetJoystickVendorForID(id), SDL_GetJoystickProductForID(id)}].push_back(id);
+    // The pads now, each with the controller behind it now (Steam may have just moved one)
+    std::map<std::pair<unsigned, unsigned>, std::vector<std::pair<u32, std::string>>> by_model;
+    {
+        const JoystickApiLock lock;
+        int count = 0;
+        SDL_JoystickID* ids = SDL_GetGamepads(&count);
+        for (int i = 0; i < count; ++i) {
+            const u32 id = ids[i];
+            if (LaunchedThroughSteam() && !IsSteamVirtualPad(id)) {
+                continue;
+            }
+            std::string key = BluetoothKey(id);
+            if (pad_bt_pending.contains(key)) {
+                by_model[{SDL_GetJoystickVendorForID(id), SDL_GetJoystickProductForID(id)}]
+                    .emplace_back(id, std::move(key));
+            }
+        }
+        SDL_free(ids);
     }
     std::set<std::string> taken;
-    for (const auto& [id, address] : pad_bluetooth) {
+    for (const auto& [key, address] : pad_bluetooth) {
         if (!address.empty()) {
             taken.insert(address);
         }
@@ -3552,19 +3577,20 @@ void MainWindow::LearnBluetoothPads() {
         std::erase_if(controllers, [&](const auto& c) { return taken.contains(c.address); });
         // The last of its model left to tell apart: that one is it
         if (pads.size() == 1 && controllers.size() == 1) {
-            const u32 id = pads[0];
-            pad_bluetooth[id] = controllers[0].bluetooth ? controllers[0].address : std::string{};
-            pad_bt_pending.erase(id);
+            const auto& [id, key] = pads[0];
+            pad_bluetooth[key] = controllers[0].bluetooth ? controllers[0].address : std::string{};
+            pad_bt_pending.erase(key);
             if (Settings::values.console_debug_probes.GetValue()) {
-                LOG_INFO(Frontend, "console-mode: inst={} is the last of its model: bluetooth={}", id,
-                         controllers[0].bluetooth ? controllers[0].address : std::string{"no"});
+                LOG_INFO(Frontend,
+                         "console-mode: inst={} ({}) is the last of its model: bluetooth={}", id,
+                         key, controllers[0].bluetooth ? controllers[0].address : std::string{"no"});
             }
             continue;
         }
-        std::vector<u32> pressed_pads;
-        for (const u32 id : pads) {
-            if (PadAnyButtonPressed(id)) {
-                pressed_pads.push_back(id);
+        std::vector<std::pair<u32, std::string>> pressed_pads;
+        for (const auto& pad : pads) {
+            if (PadAnyButtonPressed(pad.first)) {
+                pressed_pads.push_back(pad);
             }
         }
         if (pressed_pads.size() != 1) {
@@ -3581,12 +3607,17 @@ void MainWindow::LearnBluetoothPads() {
         if (count != 1) {
             continue;
         }
-        const u32 id = pressed_pads[0];
-        pad_bluetooth[id] = pressed->bluetooth ? pressed->address : std::string{};
-        pad_bt_pending.erase(id);
+        const auto& [id, key] = pressed_pads[0];
+        // (The controller behind the pad must not have changed while it was read)
+        if (BluetoothKey(id) != key) {
+            continue;
+        }
+        pad_bluetooth[key] = pressed->bluetooth ? pressed->address : std::string{};
+        pad_bt_pending.erase(key);
         if (Settings::values.console_debug_probes.GetValue()) {
-            LOG_INFO(Frontend, "console-mode: inst={} told apart by a button press: bluetooth={}", id,
-                     pressed->bluetooth ? pressed->address : std::string{"no"});
+            LOG_INFO(Frontend,
+                     "console-mode: inst={} ({}) told apart by a button press: bluetooth={}", id,
+                     key, pressed->bluetooth ? pressed->address : std::string{"no"});
         }
     }
 #endif
@@ -3891,8 +3922,6 @@ void MainWindow::ApplyConsoleControllerMode() {
             }
             u32 new_builtin = builtin_pad_id;
             const std::set<u32> benched_before = benched_pads;
-            const std::map<u32, std::string> bluetooth_before = pad_bluetooth;
-            const std::set<u32> pending_before = pad_bt_pending;
             for (const auto& [to, from] : moves) {
                 const auto slot = old_slot.find(from);
                 LOG_INFO(Frontend, "console-mode: Steam moved {} from inst={} to inst={} (P{})",
@@ -3909,16 +3938,6 @@ void MainWindow::ApplyConsoleControllerMode() {
                     benched_pads.insert(to);
                 } else {
                     benched_pads.erase(to);
-                }
-                if (const auto bt = bluetooth_before.find(from); bt != bluetooth_before.end()) {
-                    pad_bluetooth[to] = bt->second;
-                } else {
-                    pad_bluetooth.erase(to);
-                }
-                if (pending_before.contains(from)) {
-                    pad_bt_pending.insert(to);
-                } else {
-                    pad_bt_pending.erase(to);
                 }
             }
             builtin_pad_id = new_builtin;
@@ -4173,15 +4192,22 @@ void MainWindow::ApplyConsoleControllerMode() {
     // controller sits out (as if it were gone) until then, and the next controller to connect
     // takes the player. Wired controllers have no such button.
     {
-        std::erase_if(pad_bluetooth, [&](const auto& e) { return !live.contains(e.first); });
-        std::erase_if(pad_bt_pending, [&](u32 id) { return !live.contains(id); });
+        // (By the controller, see BluetoothKey)
+        std::map<u32, std::string> keys;
+        std::set<std::string> live_keys;
+        for (const auto& [id, ident] : live) {
+            keys[id] = BluetoothKey(id);
+            live_keys.insert(keys[id]);
+        }
+        std::erase_if(pad_bluetooth, [&](const auto& e) { return !live_keys.contains(e.first); });
+        std::erase_if(pad_bt_pending, [&](const auto& key) { return !live_keys.contains(key); });
 #ifdef __linux__
         for (const auto& [id, ident] : live) {
-            if (!pad_bluetooth.contains(id)) {
+            if (!pad_bluetooth.contains(keys[id])) {
                 const PadBluetooth found = FindPadBluetooth(id);
-                pad_bluetooth[id] = found.address;
+                pad_bluetooth[keys[id]] = found.address;
                 if (found.unsure) {
-                    pad_bt_pending.insert(id);
+                    pad_bt_pending.insert(keys[id]);
                 }
                 if (Settings::values.console_debug_probes.GetValue()) {
                     LOG_INFO(Frontend, "console-mode: inst={} bluetooth={}", id,
@@ -4206,14 +4232,14 @@ void MainWindow::ApplyConsoleControllerMode() {
                 continue;
             }
             const u32 id = held->first;
-            if (pad_bluetooth[id].empty()) {
+            if (pad_bluetooth[keys[id]].empty()) {
                 continue; // (Only a Bluetooth controller is turned off)
             }
             pad_slots.erase(held);
             pad_identity.erase(id);
             benched_pads.insert(id);
             removed_at[player] = QDateTime::currentMSecsSinceEpoch();
-            const std::string address = pad_bluetooth[id];
+            const std::string address = pad_bluetooth[keys[id]];
             removed_off[player] = true;
 #ifdef __linux__
             DisconnectBluetooth(address);
@@ -5100,9 +5126,10 @@ void MainWindow::ApplyConsoleControllerMode() {
             overlay_rows.push_back({i, QStringLiteral("P%1: %2").arg(i + 1).arg(
                                            overlay_row_name[i]),
                                     gone != 0 ? 0u : pad, flash, flash_since});
-            const auto address = pad_bluetooth.find(pad);
+            const std::string key = pad ? BluetoothKey(pad) : std::string{};
+            const auto address = pad_bluetooth.find(key);
             const int turn_off = address != pad_bluetooth.end() && !address->second.empty() ? 2
-                                 : pad_bt_pending.contains(pad)                            ? 1
+                                 : pad_bt_pending.contains(key)                            ? 1
                                                                                            : 0;
             tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
                                 flash_since, ConsoleBindingSets()[slot_set[i]].profile_name,
