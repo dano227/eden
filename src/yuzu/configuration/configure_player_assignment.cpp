@@ -457,15 +457,22 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* bubble_line = new QHBoxLayout(builtin_bubble);
     bubble_line->setContentsMargins(10, 5, 6, 5);
     builtin_bubble_label = new QLabel(builtin_bubble);
-    builtin_bubble_label->setWordWrap(true);
-    bubble_line->addWidget(builtin_bubble_label, 1);
+    bubble_line->addWidget(builtin_bubble_label);
     builtin_remove = new QToolButton(builtin_bubble);
     builtin_remove->setText(QStringLiteral("\u2715"));
     builtin_remove->setAutoRaise(true);
     builtin_remove->setToolTip(tr("Not the handheld's controller: remove it. Auto-detect will "
                                   "not pick it again until you allow it."));
     bubble_line->addWidget(builtin_remove);
-    builtin_layout->addWidget(builtin_bubble);
+    // The bubble as wide as the pad's name, with what it means beside it
+    builtin_bubble->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    auto* bubble_row = new QHBoxLayout();
+    bubble_row->addWidget(builtin_bubble);
+    builtin_bubble_info = new QLabel(builtin_row);
+    builtin_bubble_info->setObjectName(QStringLiteral("note"));
+    builtin_bubble_info->setWordWrap(true);
+    bubble_row->addWidget(builtin_bubble_info, 1);
+    builtin_layout->addLayout(bubble_row);
     // A removed controller: said plainly, with the way to allow it again
     blocked_row = new QWidget(builtin_row);
     auto* blocked_line = new QHBoxLayout(blocked_row);
@@ -751,13 +758,13 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
     // The handheld's controller as a bubble with its ✕, while one is connected
     const bool shown = engine_active && !detected_name.empty();
     builtin_bubble->setVisible(shown);
+    builtin_bubble_info->setVisible(shown);
     builtin_status->setVisible(!shown);
     if (shown) {
         builtin_bubble_label->setText(QString::fromStdString(detected_name));
-        builtin_bubble_label->setToolTip(
-            tr("%1 the handheld's controller. It takes no player while external controllers "
-               "are connected.")
-                .arg(want_index > 0 ? tr("Declared as") : tr("Auto-detected as")));
+        builtin_bubble_info->setText(
+            tr("%1 \u00b7 takes no player while external controllers are connected")
+                .arg(want_index > 0 ? tr("declared") : tr("auto-detected")));
     }
     // A removed controller, kept from auto-detect
     std::string blocked_name;

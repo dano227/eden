@@ -854,7 +854,14 @@ void ConfigureInput::UpdateTabArrows() {
         if (!left || !right) {
             const auto make = [this, player](Qt::ArrowType arrow, int step) {
                 auto* button = new QToolButton;
-                button->setArrowType(arrow);
+                // A small chevron in the text's colour: the dark themes' arrow images are large
+                // solid triangles
+                button->setText(arrow == Qt::LeftArrow ? QStringLiteral("\u2039")
+                                                       : QStringLiteral("\u203A"));
+                QFont font = button->font();
+                font.setBold(true);
+                font.setPointSizeF(font.pointSizeF() * 1.2);
+                button->setFont(font);
                 button->setAutoRaise(true);
                 button->setFixedSize(16, 16);
                 // The size a style sheet reports is the size the tab makes room for (the dark

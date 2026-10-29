@@ -102,6 +102,7 @@ private:
     /// auto-detect, with the way to allow it again
     QFrame* builtin_bubble = nullptr;
     QLabel* builtin_bubble_label = nullptr;
+    QLabel* builtin_bubble_info = nullptr;
     QToolButton* builtin_remove = nullptr;
     QWidget* blocked_row = nullptr;
     QLabel* blocked_label = nullptr;
