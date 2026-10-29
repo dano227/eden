@@ -439,7 +439,9 @@ protected:
         QFont font = bar->font();
         font.setBold(true);
         painter.setFont(font);
-        const auto chip = [&](const Common::ControllerConsoleState::PlayerRow& row, QRectF rect) {
+        const bool several = rows.size() > 1;
+        const auto chip = [&](const Common::ControllerConsoleState::PlayerRow& row, QRectF rect,
+                              int k) {
             const QColor color = ConfigurePlayerAssignment::PlayerColor(row.player);
             // Filled while its controller has an input held, else an outline
             const bool lit = row.active;
@@ -451,8 +453,29 @@ protected:
                 painter.setBrush(Qt::NoBrush);
             }
             painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2);
-            painter.setPen(lit ? QColor(Qt::white) : color);
-            painter.drawText(rect, Qt::AlignCenter, QStringLiteral("P%1").arg(row.player + 1));
+            const QColor ink = lit ? QColor(Qt::white) : color;
+            // With other players around: the grip, and the arrows swapping with a neighbour
+            painter.setPen(ink);
+            painter.drawText(rect, Qt::AlignCenter,
+                             several ? QStringLiteral("\u283F P%1").arg(row.player + 1)
+                                     : QStringLiteral("P%1").arg(row.player + 1));
+            if (several) {
+                const auto arrow = [&](QRectF area, bool left, bool enabled) {
+                    QColor fill = ink;
+                    fill.setAlpha(enabled ? 255 : 70);
+                    painter.setPen(Qt::NoPen);
+                    painter.setBrush(fill);
+                    const QPointF c = area.center();
+                    const qreal s = 3.5;
+                    const QPointF tri[3] = {
+                        left ? QPointF(c.x() - s, c.y()) : QPointF(c.x() + s, c.y()),
+                        left ? QPointF(c.x() + s * 0.7, c.y() - s) : QPointF(c.x() - s * 0.7, c.y() - s),
+                        left ? QPointF(c.x() + s * 0.7, c.y() + s) : QPointF(c.x() - s * 0.7, c.y() + s)};
+                    painter.drawPolygon(tri, 3);
+                };
+                arrow(LeftArrow(rect), true, k > 0);
+                arrow(RightArrow(rect), false, k + 1 < static_cast<int>(rows.size()));
+            }
         };
         for (std::size_t k = 0; k < rows.size(); ++k) {
             const QRectF rect = ChipRect(static_cast<int>(k));
@@ -465,10 +488,11 @@ protected:
                 painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2);
                 continue;
             }
-            chip(rows[k], rect);
+            chip(rows[k], rect, static_cast<int>(k));
         }
         if (dragging && pressed >= 0 && pressed < static_cast<int>(rows.size())) {
-            chip(rows[static_cast<std::size_t>(pressed)], ChipRect(pressed).translated(drag_dx, 0));
+            chip(rows[static_cast<std::size_t>(pressed)], ChipRect(pressed).translated(drag_dx, 0),
+                 pressed);
         }
     }
 
@@ -480,7 +504,8 @@ protected:
         press_x = event->position().x();
         drag_dx = 0;
         dragging = false;
-        if (pressed >= 0) {
+        // (Nothing to reorder with one player)
+        if (pressed >= 0 && rows.size() > 1) {
             long_press.start();
         }
     }
@@ -522,6 +547,24 @@ protected:
         if (IndexAt(event->position().x()) != index) {
             return;
         }
+        // An arrow: swap with the neighbouring chip's player
+        if (rows.size() > 1) {
+            const QRectF rect = ChipRect(index);
+            const QPointF at = event->position();
+            const int step = LeftArrow(rect).contains(at)    ? -1
+                             : RightArrow(rect).contains(at) ? 1
+                                                             : 0;
+            if (step != 0) {
+                const int other = index + step;
+                if (other >= 0 && other < static_cast<int>(rows.size())) {
+                    auto& state = Common::GetControllerConsoleState();
+                    std::scoped_lock lock{state.mutex};
+                    state.swap_requests.emplace_back(rows[static_cast<std::size_t>(index)].player,
+                                                     rows[static_cast<std::size_t>(other)].player);
+                }
+                return;
+            }
+        }
         // A click: the controller rumbles (vibration on), and its settings open
         const int player = rows[static_cast<std::size_t>(index)].player;
         if (Settings::values.vibration_enabled.GetValue() &&
@@ -539,12 +582,17 @@ protected:
             const int index = IndexAt(help->pos().x());
             if (index >= 0) {
                 const auto& row = rows[static_cast<std::size_t>(index)];
-                QToolTip::showText(help->globalPos(),
-                                   QObject::tr("P%1: %2\nClick: rumble and open its settings\n"
-                                               "Hold, then drag: change the player order")
-                                       .arg(row.player + 1)
-                                       .arg(QString::fromStdString(row.name)),
-                                   this);
+                QToolTip::showText(
+                    help->globalPos(),
+                    rows.size() > 1
+                        ? QObject::tr("P%1: %2\nClick: rumble and open its settings\nArrows, "
+                                      "or hold then drag: change the player order")
+                              .arg(row.player + 1)
+                              .arg(QString::fromStdString(row.name))
+                        : QObject::tr("P%1: %2\nClick: rumble and open its settings")
+                              .arg(row.player + 1)
+                              .arg(QString::fromStdString(row.name)),
+                    this);
             } else {
                 QToolTip::hideText();
             }
@@ -555,10 +603,24 @@ protected:
 
 private:
     static constexpr int chip_w = 34;
+    /// With arrows and the grip, when there are several players
+    static constexpr int chip_w_full = 74;
     static constexpr int chip_gap = 4;
 
+    int ChipWidth() const {
+        return rows.size() > 1 ? chip_w_full : chip_w;
+    }
+
     QRectF ChipRect(int k) const {
-        return QRectF(4 + k * (chip_w + chip_gap), 3, chip_w, height() - 6);
+        return QRectF(4 + k * (ChipWidth() + chip_gap), 3, ChipWidth(), height() - 6);
+    }
+
+    static QRectF LeftArrow(const QRectF& chip) {
+        return QRectF(chip.left() + 2, chip.top(), 14, chip.height());
+    }
+
+    static QRectF RightArrow(const QRectF& chip) {
+        return QRectF(chip.right() - 16, chip.top(), 14, chip.height());
     }
 
     int IndexAt(double x) const {
@@ -596,8 +658,9 @@ private:
                 }
             }
         }
-        const QRect place(x + 10, 0,
-                          8 + static_cast<int>(now.size()) * (chip_w + chip_gap), bar->height());
+        const int width_each = now.size() > 1 ? chip_w_full : chip_w;
+        const QRect place(x + 10, 0, 8 + static_cast<int>(now.size()) * (width_each + chip_gap),
+                          bar->height());
         if (geometry() != place) {
             setGeometry(place);
         }

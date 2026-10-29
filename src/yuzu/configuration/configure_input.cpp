@@ -242,6 +242,9 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
         if (mirror_console_mode) {
             mirror_console_mode();
         }
+        // Several players: the tabs drag and carry arrows; one alone has nothing to reorder
+        const bool several = std::count_if(rows.begin(), rows.end(),
+                                           [](const auto& r) { return !r.leaving; }) > 1;
         for (std::size_t i = 0; i < player_tabs.size(); ++i) {
             const auto row = std::find_if(rows.begin(), rows.end(), [i](const auto& r) {
                 return r.player == static_cast<int>(i);
@@ -289,8 +292,10 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                         set_text(player_tab_titles[i]);
                         set_tip({});
                     } else if (shown) {
-                        // The grip says the tab drags, like the Controllers tab's rows
-                        set_text(QStringLiteral("\u283F P%1").arg(i + 1));
+                        // The grip says the tab drags, like the Controllers tab's rows (alone,
+                        // there is nothing to reorder)
+                        set_text(several ? QStringLiteral("\u283F P%1").arg(i + 1)
+                                         : QStringLiteral("P%1").arg(i + 1));
                         set_tip(tr("P%1: %2\nDrag left or right to change the player order")
                                     .arg(i + 1)
                                     .arg(QString::fromStdString(row->name)));
@@ -303,7 +308,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
         // selected tab reads bold
         if (tabs) {
             const bool controls_page = tabs->indexOf(player_tabs[0]) >= 0;
-            tabs_editable = automatic && engine_active && controls_page;
+            tabs_editable = automatic && engine_active && controls_page && several;
             // Under the dark themes Qt's drag would show the theme's tab: Eden drags it instead
             tabs->setMovable(tabs_editable && !UISettings::IsDarkTheme());
             // Pill tabs in the players' colours, the selected one filled (the tab bar is the
