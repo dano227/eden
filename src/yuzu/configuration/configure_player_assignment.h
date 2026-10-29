@@ -110,6 +110,10 @@ private:
     QWidget* debug_box = nullptr;
     QAbstractButton* probes_toggle = nullptr;
     bool original_probes = false;
+    /// Motion from Real Controllers (under Steam), in the same card
+    QAbstractButton* real_motion_toggle = nullptr;
+    QLabel* real_motion_restart = nullptr;
+    bool original_real_motion = true;
     QWidget* now_box = nullptr;
 
     QWidget* builtin_row = nullptr;

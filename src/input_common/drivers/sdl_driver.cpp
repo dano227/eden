@@ -18,6 +18,7 @@
 #include "common/logging.h"
 #include "common/math_util.h"
 #include "common/param_package.h"
+#include "common/controller_console_state.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "common/vector_math.h"
@@ -792,6 +793,18 @@ void UnhideMotionControllers() {
     if (!std::getenv("SteamGameId") && !std::getenv("SteamAppId")) {
         return;
     }
+    // Only for Modern Console with Motion from Real Controllers on: otherwise Steam keeps every
+    // controller to itself, as on master (nothing else talks to a Steam Controller, say)
+    const auto mode = Settings::values.controller_applet_mode.GetValue();
+    const bool automatic = mode == Settings::AppletMode::ConsoleMode ||
+                           mode == Settings::AppletMode::HandheldConsoleMode;
+    if (!automatic || !Settings::values.console_real_motion.GetValue()) {
+        if (Settings::values.console_debug_probes.GetValue()) {
+            LOG_INFO(Input, "Steam Input: real controllers left hidden ({})",
+                     automatic ? "Motion from Real Controllers off" : "not Modern Console");
+        }
+        return;
+    }
     const char* env = std::getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES");
     std::string list = env ? env : "";
     if (list.starts_with('@')) {
@@ -824,6 +837,11 @@ void UnhideMotionControllers() {
     if (Settings::values.console_debug_probes.GetValue()) {
         LOG_INFO(Input, "Steam Input: opening motion controllers for their sensors: {}",
                  dropped.empty() ? std::string{"none hidden"} : dropped);
+    }
+    {
+        auto& state = Common::GetControllerConsoleState();
+        std::scoped_lock lock{state.mutex};
+        state.real_motion_active = true;
     }
     SDL_SetHintWithPriority(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, kept.c_str(),
                             SDL_HINT_OVERRIDE);
