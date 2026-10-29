@@ -360,11 +360,11 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             // A player tab's colour is what makes it a bubble: none outside these modes
             for (std::size_t i = 0; i < player_tabs.size(); ++i) {
                 if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
-                    const QVariant data =
+                    const QVariant tab_data =
                         pills ? QVariant(ConfigurePlayerAssignment::PlayerColor(static_cast<int>(i)))
                               : QVariant{};
-                    if (bar->tabData(index) != data) {
-                        bar->setTabData(index, data);
+                    if (bar->tabData(index) != tab_data) {
+                        bar->setTabData(index, tab_data);
                     }
                 }
             }
@@ -622,8 +622,8 @@ void PlayerTabOverlay::paintEvent(QPaintEvent*) {
         painter.drawText(text, Qt::AlignCenter, bar->tabText(i));
     };
     for (int i = 0; i < bar->count(); ++i) {
-        const QVariant data = bar->tabData(i);
-        if (data.metaType() != QMetaType::fromType<QColor>() || !bar->isTabVisible(i)) {
+        const QVariant tab_data = bar->tabData(i);
+        if (tab_data.metaType() != QMetaType::fromType<QColor>() || !bar->isTabVisible(i)) {
             continue;
         }
         const QRect tab = bar->tabRect(i);
@@ -631,7 +631,7 @@ void PlayerTabOverlay::paintEvent(QPaintEvent*) {
         painter.fillRect(tab, background);
         if (i == drag_index) {
             // Where the dragged tab came from: an empty slot
-            QColor edge = data.value<QColor>();
+            QColor edge = tab_data.value<QColor>();
             edge.setAlpha(90);
             painter.setPen(QPen(edge, 1, Qt::DashLine));
             painter.setBrush(Qt::NoBrush);
