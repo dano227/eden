@@ -1051,11 +1051,6 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                 ui->miscButtons->setStretch(0, 1);
                 ui->miscButtons->addStretch(1);
             }
-            // Connect Controller's drop-down sits at the top of its box, level with the
-            // Mapping Profile card's beside it
-            if (QLayout* connect = ui->groupConnectedController->layout()) {
-                connect->setAlignment(Qt::AlignTop);
-            }
             // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
             // trigger slider is below)
             for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
@@ -1188,7 +1183,8 @@ void ConfigureInputPlayer::BuildProfileCard() {
     row->addSpacing(8);
     row->addWidget(card_status, 1);
     column->addLayout(row);
-    column->addStretch(1);
+    // No taller than its row: the drawing below gets the height
+    profile_card->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 
     auto* menu = new QMenu(card_more);
     auto* save_new = menu->addAction(tr("Save as new..."));
