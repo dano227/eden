@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <numbers>
@@ -701,6 +702,68 @@ bool IsMotionController(unsigned vendor, unsigned product) {
 
 /// Under Steam, takes the motion controllers off Steam's hide list, so SDL also opens the real
 /// devices (for their motion) next to Steam's sensorless virtual pads
+/// Logs the system's motion sensors and HID devices once, for adding handhelds and their gyros
+/// from users' logs: a handheld's built-in gyro is usually a sensor of the system (IIO), not of
+/// its gamepad, so SDL never sees it. Read-only.
+void LogMotionHardware() {
+#ifdef __linux__
+    namespace fs = std::filesystem;
+    const auto read_line = [](const fs::path& path) {
+        std::ifstream file{path};
+        std::string line;
+        std::getline(file, line);
+        return line;
+    };
+    std::error_code error;
+    std::string sensors;
+    // (Iterated without exceptions: a device can come or go while it is read)
+    for (fs::directory_iterator it{"/sys/bus/iio/devices", error}, end; !error && it != end;
+         it.increment(error)) {
+        const fs::path dir = it->path();
+        std::error_code ignored;
+        const bool gyro = fs::exists(dir / "in_anglvel_x_raw", ignored);
+        const bool accel = fs::exists(dir / "in_accel_x_raw", ignored);
+        if (!gyro && !accel) {
+            continue;
+        }
+        std::string mount = read_line(dir / "in_anglvel_mount_matrix");
+        if (mount.empty()) {
+            mount = read_line(dir / "in_accel_mount_matrix");
+        }
+        const fs::path device = fs::canonical(dir / "device", ignored);
+        sensors += fmt::format("\n  {} name={} gyro={} accel={} mount=[{}] at={}",
+                               dir.filename().string(), read_line(dir / "name"), gyro, accel,
+                               mount, ignored ? std::string{"?"} : device.string());
+    }
+    LOG_INFO(Input, "Motion sensors of the system (IIO):{}",
+             sensors.empty() ? std::string{" none"} : sensors);
+
+    std::string hid;
+    error.clear();
+    for (fs::directory_iterator it{"/sys/class/hidraw", error}, end; !error && it != end;
+         it.increment(error)) {
+        const auto& entry = *it;
+        std::ifstream uevent{entry.path() / "device" / "uevent"};
+        std::string line;
+        std::string id;
+        std::string name;
+        while (std::getline(uevent, line)) {
+            if (line.starts_with("HID_ID=")) {
+                // bus:vendor:product, each zero-padded to 8 hex digits
+                unsigned bus = 0, vendor = 0, product = 0;
+                if (std::sscanf(line.c_str() + 7, "%x:%x:%x", &bus, &vendor, &product) == 3) {
+                    id = fmt::format("{:04x}:{:04x} bus={}", vendor, product, bus);
+                }
+            } else if (line.starts_with("HID_NAME=")) {
+                name = line.substr(9);
+            }
+        }
+        hid += fmt::format("\n  {} {} name={}", entry.path().filename().string(), id, name);
+    }
+    LOG_INFO(Input, "HID devices:{}", hid.empty() ? std::string{" none"} : hid);
+#endif
+}
+
 void UnhideMotionControllers() {
     if (!std::getenv("SteamGameId") && !std::getenv("SteamAppId")) {
         return;
@@ -760,6 +823,7 @@ SDLDriver::SDLDriver(std::string input_engine_) : InputEngine(std::move(input_en
     // SDL3 defaults Steam Controller Bluetooth HIDAPI support to off, which can disable gyro.
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");
     UnhideMotionControllers();
+    LogMotionHardware();
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_SENSOR_FUSION, "1");
     SDL_SetHint(SDL_HINT_AUTO_UPDATE_SENSORS, "1");
 
