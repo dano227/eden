@@ -40,6 +40,10 @@ struct ControllerConsoleState {
     /// The handheld's own pad: its name ("" when not identified) and whether it holds a player
     std::string handheld_name;
     bool handheld_has_player = false;
+    /// The Controllers tab asked to remove the handheld's controller (its ✕)
+    bool builtin_remove_request = false;
+    /// The removed controller auto-detect leaves alone, by name ("" when not connected)
+    std::string handheld_blocked_name;
     /// Swaps requested by the Players tab, as (player a, player b); the engine applies them
     /// on its next tick, for this session only (the saved controller setup is untouched)
     std::vector<std::pair<int, int>> swap_requests;

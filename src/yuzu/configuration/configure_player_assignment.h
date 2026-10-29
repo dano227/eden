@@ -21,6 +21,7 @@ class QVBoxLayout;
 class QLabel;
 class QPushButton;
 class QTimer;
+class QToolButton;
 class QWidget;
 
 /// The Controllers tab of the Controls settings: how players are assigned (by hand, or
@@ -97,6 +98,14 @@ private:
     QComboBox* builtin_picker = nullptr;
     QPushButton* builtin_identify = nullptr;
     QLabel* builtin_status = nullptr;
+    /// The handheld's controller as a bubble (its ✕ removes it), and the removed one kept from
+    /// auto-detect, with the way to allow it again
+    QFrame* builtin_bubble = nullptr;
+    QLabel* builtin_bubble_label = nullptr;
+    QToolButton* builtin_remove = nullptr;
+    QWidget* blocked_row = nullptr;
+    QLabel* blocked_label = nullptr;
+    QPushButton* blocked_allow = nullptr;
     QString builtin_signature;
 
     QWidget* players_box = nullptr;

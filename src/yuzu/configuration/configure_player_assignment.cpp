@@ -448,9 +448,47 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     builtin_identify->setStyleSheet(OutlinedButtonStyle());
     picker_row->addWidget(builtin_identify);
     builtin_layout->addLayout(picker_row);
+    // The handheld's controller as a bubble, like a player's row: its ✕ removes it
+    builtin_bubble = new QFrame(builtin_row);
+    builtin_bubble->setObjectName(QStringLiteral("handheldBubble"));
+    builtin_bubble->setStyleSheet(
+        Themed(QStringLiteral("#handheldBubble { border: 1px solid palette(mid); "
+                              "border-radius: 8px; background: palette(base); }")));
+    auto* bubble_line = new QHBoxLayout(builtin_bubble);
+    bubble_line->setContentsMargins(10, 5, 6, 5);
+    builtin_bubble_label = new QLabel(builtin_bubble);
+    builtin_bubble_label->setWordWrap(true);
+    bubble_line->addWidget(builtin_bubble_label, 1);
+    builtin_remove = new QToolButton(builtin_bubble);
+    builtin_remove->setText(QStringLiteral("\u2715"));
+    builtin_remove->setAutoRaise(true);
+    builtin_remove->setToolTip(tr("Not the handheld's controller: remove it. Auto-detect will "
+                                  "not pick it again until you allow it."));
+    bubble_line->addWidget(builtin_remove);
+    builtin_layout->addWidget(builtin_bubble);
+    // A removed controller: said plainly, with the way to allow it again
+    blocked_row = new QWidget(builtin_row);
+    auto* blocked_line = new QHBoxLayout(blocked_row);
+    blocked_line->setContentsMargins(0, 0, 0, 0);
+    blocked_label = new QLabel(blocked_row);
+    blocked_label->setWordWrap(true);
+    blocked_label->setObjectName(QStringLiteral("note"));
+    blocked_line->addWidget(blocked_label, 1);
+    blocked_allow = new QPushButton(tr("Allow Again"), blocked_row);
+    blocked_allow->setCursor(Qt::PointingHandCursor);
+    blocked_allow->setStyleSheet(OutlinedButtonStyle());
+    blocked_line->addWidget(blocked_allow);
+    builtin_layout->addWidget(blocked_row);
     builtin_status = new QLabel(builtin_row);
     builtin_status->setWordWrap(true);
     builtin_layout->addWidget(builtin_status);
+    connect(builtin_remove, &QToolButton::clicked, this, [] {
+        auto& state = Common::GetControllerConsoleState();
+        std::scoped_lock lock{state.mutex};
+        state.builtin_remove_request = true;
+    });
+    connect(blocked_allow, &QPushButton::clicked, this,
+            [] { Settings::values.builtin_pad_blocked.SetValue(std::string{}); });
     layout->addWidget(builtin_row);
 
     // The players right now, as the engine assigned them
@@ -708,6 +746,31 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
                 .arg(!detected_name.empty()
                          ? tr("Takes no player while external controllers are connected.")
                          : tr("Not currently connected.")));
+    }
+
+    // The handheld's controller as a bubble with its ✕, while one is connected
+    const bool shown = engine_active && !detected_name.empty();
+    builtin_bubble->setVisible(shown);
+    builtin_status->setVisible(!shown);
+    if (shown) {
+        builtin_bubble_label->setText(
+            tr("%1 \u00b7 %2 \u00b7 takes no player while external controllers are connected")
+                .arg(QString::fromStdString(detected_name))
+                .arg(want_index > 0 ? tr("declared") : tr("auto-detected")));
+    }
+    // A removed controller, kept from auto-detect
+    std::string blocked_name;
+    {
+        std::scoped_lock lock{state.mutex};
+        blocked_name = state.handheld_blocked_name;
+    }
+    const bool blocked = !Settings::values.builtin_pad_blocked.GetValue().empty();
+    blocked_row->setVisible(blocked);
+    if (blocked) {
+        blocked_label->setText(
+            tr("Auto-detect is off for %1: it will not be picked as the handheld's controller.")
+                .arg(blocked_name.empty() ? tr("the removed controller")
+                                          : QString::fromStdString(blocked_name)));
     }
 }
 
@@ -970,6 +1033,8 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
 }
 
 void ConfigurePlayerAssignment::OnBuiltinPicked(int index) {
+    // Picking is the user's say: a removed controller is no longer kept from auto-detect
+    Settings::values.builtin_pad_blocked.SetValue(std::string{});
     const QString ident = builtin_picker->itemData(index).toString();
     if (ident.isEmpty()) {
         // Detect automatically: forget the stored pad, so the engine detects it afresh
@@ -990,6 +1055,7 @@ void ConfigurePlayerAssignment::OnBuiltinPicked(int index) {
 }
 
 void ConfigurePlayerAssignment::OnIdentifyPressed() {
+    Settings::values.builtin_pad_blocked.SetValue(std::string{});
     auto& state = Common::GetControllerConsoleState();
     std::scoped_lock lock{state.mutex};
     state.identify_armed = true;

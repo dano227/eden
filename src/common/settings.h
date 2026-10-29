@@ -225,6 +225,10 @@ struct Values {
 
     /// Under Steam Input, the Steam handle of the handheld's own pad: its virtual pad shares
     /// the GUID of every other one, but this handle stays the same across sessions
+    /// A controller the user removed as the handheld's own (its Steam handle under Steam, else
+    /// its identity): auto-detect leaves it alone until it is allowed again, picked or identified
+    SwitchableSetting<std::string> builtin_pad_blocked{linkage, std::string{}, "builtin_pad_blocked",
+                                                       Category::Core};
     SwitchableSetting<std::string> builtin_pad_steam_handle{
         linkage, std::string{}, "builtin_pad_steam_handle", Category::Core};
     SwitchableSetting<MemoryLayout, true> memory_layout_mode{linkage,

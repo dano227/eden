@@ -2150,6 +2150,17 @@ Uint64 PadSteamHandle(SDL_JoystickID id) {
     return handle;
 }
 
+/// How a pad is stored as the handheld's (or as the removed one): its Steam handle under Steam,
+/// else its identity
+std::string PadKey(SDL_JoystickID id, const std::string& ident) {
+    if (LaunchedThroughSteam()) {
+        if (const Uint64 handle = PadSteamHandle(id)) {
+            return fmt::format("steamhandle:{:#x}", handle);
+        }
+    }
+    return ident;
+}
+
 /// True while a pad has an input held: any button, or a stick or trigger past half travel.
 bool PadInputHeld(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -3588,11 +3599,37 @@ void MainWindow::ApplyConsoleControllerMode() {
     //   3. a unique identity match (direct launches, where identities are honest).
     // Anything else and the rules PAUSE. Safe beats clever - the lesson of the X-1
     // pattern, where an impostor wearing the identity struck the wrong player row.
+    // The handheld's controller removed with its ✕: it is no longer the handheld's, and
+    // auto-detect leaves it alone until it is allowed again (or picked, or identified)
+    {
+        bool remove = false;
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            remove = std::exchange(state.builtin_remove_request, false);
+        }
+        if (remove && builtin_pad_id && live.contains(builtin_pad_id)) {
+            const std::string key = PadKey(builtin_pad_id, live[builtin_pad_id]);
+            Settings::values.builtin_pad_blocked.SetValue(key);
+            Settings::values.builtin_pad_steam_handle.SetValue(std::string{});
+            Settings::values.builtin_pad_identity.SetValue(std::string{});
+            Settings::values.builtin_pad_manual.SetValue(false);
+            builtin_pad_id = 0;
+            builtin_identity.clear();
+            LOG_INFO(Frontend, "console-mode: handheld controller {} removed: auto-detect skips it",
+                     key);
+        }
+    }
+    const std::string blocked_key = Settings::values.builtin_pad_blocked.GetValue();
+    const auto is_blocked = [&](u32 id) {
+        return !blocked_key.empty() && live.contains(id) && PadKey(id, live[id]) == blocked_key;
+    };
     u32 builtin_match_id = 0;
     bool builtin_valid = false;
     const bool steam_handle_known =
         LaunchedThroughSteam() && !Settings::values.builtin_pad_steam_handle.GetValue().empty();
-    if (builtin_pad_id && live.find(builtin_pad_id) != live.end() && !steam_handle_known) {
+    if (builtin_pad_id && live.find(builtin_pad_id) != live.end() && !steam_handle_known &&
+        !is_blocked(builtin_pad_id)) {
         builtin_match_id = builtin_pad_id;
         builtin_valid = true;
     } else if (LaunchedThroughSteam()) {
@@ -3606,7 +3643,7 @@ void MainWindow::ApplyConsoleControllerMode() {
         u32 holder = 0;
         if (!want.empty()) {
             for (const auto& [id, ident] : live) {
-                if (fmt::format("{:#x}", PadSteamHandle(id)) != want) {
+                if (fmt::format("{:#x}", PadSteamHandle(id)) != want || is_blocked(id)) {
                     continue;
                 }
                 if (!CouldBeHandheld(PadVendor(id), PadProduct(id))) {
@@ -3631,7 +3668,8 @@ void MainWindow::ApplyConsoleControllerMode() {
             u32 fit = 0;
             for (const auto& [id, ident] : live) {
                 if (SDL_GetGamepadTypeForID(id) == SDL_GAMEPAD_TYPE_UNKNOWN &&
-                    PadSteamHandle(id) != 0 && CouldBeHandheld(PadVendor(id), PadProduct(id))) {
+                    PadSteamHandle(id) != 0 && CouldBeHandheld(PadVendor(id), PadProduct(id)) &&
+                    !is_blocked(id)) {
                     ++fits;
                     fit = id;
                 }
@@ -3643,7 +3681,8 @@ void MainWindow::ApplyConsoleControllerMode() {
             } else if (want.empty() && live.size() == 1 &&
                        !IsStandaloneControllerType(SDL_GetGamepadTypeForID(live.begin()->first)) &&
                        CouldBeHandheld(PadVendor(live.begin()->first),
-                                       PadProduct(live.begin()->first))) {
+                                       PadProduct(live.begin()->first)) &&
+                       !is_blocked(live.begin()->first)) {
                 count = 1;
                 holder = live.begin()->first;
             }
@@ -3674,7 +3713,7 @@ void MainWindow::ApplyConsoleControllerMode() {
         int identity_count = 0;
         u32 identity_holder = 0;
         for (const auto& [id, ident] : live) {
-            if (ident == builtin_identity) {
+            if (ident == builtin_identity && !is_blocked(id)) {
                 ++identity_count;
                 identity_holder = id;
             }
@@ -3739,7 +3778,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 std::vector<u32> makers;
                 std::vector<u32> decks;
                 for (const auto& [id, ident] : live) {
-                    if (IsSteamVirtualPad(id)) {
+                    if (IsSteamVirtualPad(id) || is_blocked(id)) {
                         // A virtual pad carries its launcher's vendor (Valve under Steam
                         // Input), which is not evidence of handheld hardware at all
                         continue;
@@ -3773,7 +3812,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 builtin_warned = false;
                 builtin_match_id = candidate;
                 builtin_valid = true;
-            } else if (live.size() == 1 && !IsControllerMaker(PadVendor(live.begin()->first))) {
+            } else if (live.size() == 1 && !IsControllerMaker(PadVendor(live.begin()->first)) &&
+                       !is_blocked(live.begin()->first)) {
                 LOG_INFO(Frontend, "console-mode: handheld {:04x}:{:04x} assumed: the only pad",
                          PadVendor(live.begin()->first), PadProduct(live.begin()->first));
                 builtin_match_id = live.begin()->first;
@@ -4426,12 +4466,20 @@ void MainWindow::ApplyConsoleControllerMode() {
                 handheld_name = name.toStdString();
                 handheld_has_player = pad_slots.contains(builtin_match_id);
             }
+            // The removed controller, by name while it is connected
+            std::string blocked_name;
+            for (const auto& [id, ident] : live) {
+                if (is_blocked(id)) {
+                    blocked_name = PadName(id).toStdString();
+                }
+            }
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
             state.engine_active = true;
             state.players = std::move(tab_rows);
             state.handheld_name = std::move(handheld_name);
             state.handheld_has_player = handheld_has_player;
+            state.handheld_blocked_name = std::move(blocked_name);
         }
         RenderControllerOverlay();
     }
