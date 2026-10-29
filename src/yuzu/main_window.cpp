@@ -3215,12 +3215,42 @@ void MainWindow::RenderControllerOverlay() {
             continue;
         }
 
-        // The history bubble: the last presses, newest first and brightest, each shrinking
-        // away at the far end as it expires (and the bubble with them)
+        // The history bubble: the last inputs, newest first and brightest, each shrinking away
+        // at the far end as it expires (and the bubble with them). Buttons pressed together
+        // share a capsule, joined by "+"; inputs that no longer fit drop off the far end.
         const auto& presses = press_history[row.player];
+        struct Input {
+            std::size_t first;
+            std::size_t count;
+            double scale;
+            double width;
+        };
+        constexpr double plus_w = 10;
+        constexpr double capsule_pad = 3;
+        std::vector<Input> inputs; // newest first
         double chips_w = 0;
-        for (const auto& press : presses) {
-            chips_w += (chip_width(chip(press.button).first) + chip_gap) * press_scale(press);
+        for (std::size_t end = presses.size(); end > 0;) {
+            std::size_t first = end - 1;
+            while (first > 0 && presses[first - 1].at == presses[end - 1].at) {
+                --first;
+            }
+            const double scale = press_scale(presses[first]);
+            double width = 0;
+            for (std::size_t k = first; k < end; ++k) {
+                width += chip_width(chip(presses[k].button).first);
+            }
+            if (end - first > 1) {
+                width += capsule_pad * 2 + plus_w * static_cast<double>(end - first - 1);
+            }
+            width *= scale;
+            if (scale > 0.0) {
+                if (chips_w + width > history_room - inner * 2) {
+                    break;
+                }
+                inputs.push_back({first, end - first, scale, width});
+                chips_w += width + chip_gap * scale;
+            }
+            end = first;
         }
         if (chips_w > 0.5) {
             const double bubble_x = 1 + controller_w + bubble_gap;
@@ -3229,28 +3259,50 @@ void MainWindow::RenderControllerOverlay() {
             painter.drawRoundedRect(QRectF(bubble_x, y, (std::max)(bubble_w, double{row_h}), row_h),
                                     row_h / 2.0, row_h / 2.0);
             double cx = bubble_x + inner;
-            const int n = static_cast<int>(presses.size());
-            for (int k = n - 1; k >= 0; --k) {
-                const double scale = press_scale(presses[k]);
-                if (scale <= 0.0) {
-                    continue;
-                }
-                const auto& [label, color] = chip(presses[k].button);
-                const int alpha = static_cast<int>((255 - (n - 1 - k) * 12) * scale);
-                const double w = chip_width(label) * scale;
+            for (std::size_t g = 0; g < inputs.size(); ++g) {
+                const auto& input = inputs[g];
+                const double scale = input.scale;
+                const int alpha = static_cast<int>((255 - static_cast<int>(g) * 12) * scale);
                 const double h = chip_h * scale;
-                QColor chip_color = color;
-                chip_color.setAlpha(alpha);
-                const QRectF rect(cx, y + (row_h - h) / 2.0, w, h);
-                painter.setBrush(chip_color);
-                painter.drawRoundedRect(rect, h / 2.0, h / 2.0);
-                if (scale > 0.6) {
-                    painter.setFont(chip_font);
-                    painter.setPen(QColor(255, 255, 255, alpha));
-                    painter.drawText(rect, Qt::AlignCenter, label);
+                const bool together = input.count > 1;
+                double x = cx;
+                if (together) {
+                    // The capsule: a light band with an outline around the buttons
+                    const double ch = (chip_h + capsule_pad * 2) * scale;
+                    const QRectF capsule(cx, y + (row_h - ch) / 2.0, input.width, ch);
+                    painter.setBrush(QColor(255, 255, 255, 40 * alpha / 255));
+                    painter.setPen(QPen(QColor(255, 255, 255, 120 * alpha / 255), 1));
+                    painter.drawRoundedRect(capsule, ch / 2.0, ch / 2.0);
                     painter.setPen(Qt::NoPen);
+                    x += capsule_pad * scale;
                 }
-                cx += w + chip_gap * scale;
+                for (std::size_t k = input.first; k < input.first + input.count; ++k) {
+                    const auto& [label, color] = chip(presses[k].button);
+                    const double w = chip_width(label) * scale;
+                    QColor chip_color = color;
+                    chip_color.setAlpha(alpha);
+                    const QRectF rect(x, y + (row_h - h) / 2.0, w, h);
+                    painter.setBrush(chip_color);
+                    painter.drawRoundedRect(rect, h / 2.0, h / 2.0);
+                    if (scale > 0.6) {
+                        painter.setFont(chip_font);
+                        painter.setPen(QColor(255, 255, 255, alpha));
+                        painter.drawText(rect, Qt::AlignCenter, label);
+                        painter.setPen(Qt::NoPen);
+                    }
+                    x += w;
+                    if (k + 1 < input.first + input.count) {
+                        if (scale > 0.6) {
+                            painter.setFont(chip_font);
+                            painter.setPen(QColor(255, 255, 255, alpha));
+                            painter.drawText(QRectF(x, y, plus_w * scale, row_h), Qt::AlignCenter,
+                                             QStringLiteral("+"));
+                            painter.setPen(Qt::NoPen);
+                        }
+                        x += plus_w * scale;
+                    }
+                }
+                cx += input.width + chip_gap * scale;
             }
         }
         y += row_h + row_gap;
@@ -3531,6 +3583,38 @@ bool MainWindow::PollButtonHistory() {
             history.pop_front();
             pressed = true;
         }
+        // Presses within 50ms of an input's first (about three frames) are one input, as a
+        // fighting game's training mode shows them: they share its time. Ten inputs at most.
+        constexpr qint64 together_ms = 50;
+        const auto record = [&](int button) {
+            qint64 at = now_ms;
+            if (!history.empty() && now_ms - history.back().at <= together_ms) {
+                const qint64 group = history.back().at;
+                // (A stick turning again is a new input, not a second press)
+                const bool same_stick =
+                    button >= StickMoveButton &&
+                    std::any_of(history.begin(), history.end(), [&](const ButtonPress& p) {
+                        return p.at == group && p.button >= StickMoveButton &&
+                               (p.button - StickMoveButton) / 4 == (button - StickMoveButton) / 4;
+                    });
+                if (!same_stick) {
+                    at = group;
+                }
+            }
+            history.push_back({button, at});
+            std::set<qint64> inputs;
+            for (const auto& press : history) {
+                inputs.insert(press.at);
+            }
+            while (inputs.size() > 10) {
+                const qint64 oldest = history.front().at;
+                while (!history.empty() && history.front().at == oldest) {
+                    history.pop_front();
+                }
+                inputs.erase(oldest);
+            }
+            pressed = true;
+        };
         // A stick counts when it leaves the middle, and again when it turns another way
         const auto sticks = controller->GetSticksValues();
         for (int s = 0; s < 2; ++s) {
@@ -3542,11 +3626,7 @@ bool MainWindow::PollButtonHistory() {
                 const int direction = std::abs(x) > std::abs(y) ? (x < 0 ? 0 : 2) : (y > 0 ? 1 : 3);
                 if (direction + 1 != pointing) {
                     pointing = direction + 1;
-                    history.push_back({StickMoveButton + s * 4 + direction, now_ms});
-                    if (history.size() > 10) {
-                        history.pop_front();
-                    }
-                    pressed = true;
+                    record(StickMoveButton + s * 4 + direction);
                 }
             } else if (reach < 0.3f) {
                 pointing = 0;
@@ -3557,11 +3637,7 @@ bool MainWindow::PollButtonHistory() {
         for (int b = 0; b < Settings::NativeButton::NumButtons; ++b) {
             const bool held = values[b].value;
             if (held && !down[b]) {
-                history.push_back({b, now_ms});
-                if (history.size() > 10) {
-                    history.pop_front();
-                }
-                pressed = true;
+                record(b);
             }
             down[b] = held;
         }
