@@ -85,6 +85,10 @@
 #include <QFileInfo>
 #include <QFile>
 #ifdef __linux__
+#include <fcntl.h>
+#include <linux/input.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
@@ -2005,15 +2009,59 @@ std::optional<HidEntry> ReadHidEntry(const QString& dir) {
     return has_id ? std::optional{entry} : std::nullopt;
 }
 
-/// The Bluetooth address of a pad's controller, or "" when it is not on Bluetooth or can't be
-/// told apart: the HID device behind the pad's node, else (under Steam, whose virtual pads hide
-/// the real one) the controller of the pad's model when it is the only one, on any bus (a wired
-/// DualSense and a Bluetooth one share a model: never the wrong one off)
-std::string PadBluetoothAddress(SDL_JoystickID id) {
-    constexpr unsigned bus_bluetooth = 0x5;
-    const auto valid = [](const HidEntry& entry) {
-        return entry.bus == bus_bluetooth && entry.address.size() == 17;
-    };
+/// A controller as the kernel has it: its address (or HID entry name), whether it is on
+/// Bluetooth, and its input nodes (for which buttons it has held)
+struct RealController {
+    std::string key;
+    std::string address;
+    bool bluetooth = false;
+    std::vector<QString> events;
+};
+
+constexpr unsigned BusBluetooth = 0x5;
+
+/// The controllers of a model; one controller can have several HID entries, which share its
+/// address
+std::vector<RealController> ControllersOfModel(unsigned vendor, unsigned product) {
+    std::map<std::string, RealController> found;
+    const QDir devices{QStringLiteral("/sys/bus/hid/devices")};
+    for (const QString& name : devices.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QString dir = devices.filePath(name);
+        const auto entry = ReadHidEntry(dir);
+        if (!entry || entry->vendor != vendor || entry->product != product) {
+            continue;
+        }
+        const std::string key = entry->address.empty() ? name.toStdString() : entry->address;
+        auto& controller = found[key];
+        controller.key = key;
+        controller.address = entry->address;
+        controller.bluetooth = entry->bus == BusBluetooth && entry->address.size() == 17;
+        const QDir inputs{dir + QStringLiteral("/input")};
+        for (const QString& input : inputs.entryList({QStringLiteral("input*")}, QDir::Dirs)) {
+            const QDir nodes{inputs.filePath(input)};
+            for (const QString& event : nodes.entryList({QStringLiteral("event*")}, QDir::Dirs)) {
+                controller.events.push_back(QStringLiteral("/dev/input/") + event);
+            }
+        }
+    }
+    std::vector<RealController> out;
+    for (auto& [key, controller] : found) {
+        out.push_back(std::move(controller));
+    }
+    return out;
+}
+
+/// Whether a pad's controller is on Bluetooth, and its address: from the HID device behind the
+/// pad's node, else (under Steam, whose virtual pads hide the real one) the controller of its
+/// model when there is just one. With several of the model and one on Bluetooth it is unsure,
+/// until a button press tells them apart (a wired DualSense and a Bluetooth one share a model:
+/// never the wrong one off).
+struct PadBluetooth {
+    std::string address;
+    bool unsure = false;
+};
+
+PadBluetooth FindPadBluetooth(SDL_JoystickID id) {
     const QString node = QFileInfo{PadPath(id)}.fileName();
     if (!node.isEmpty()) {
         const QString dir =
@@ -2023,25 +2071,47 @@ std::string PadBluetoothAddress(SDL_JoystickID id) {
                 : QFileInfo{QStringLiteral("/sys/class/input/%1/device/device").arg(node)}
                       .canonicalFilePath();
         if (const auto entry = ReadHidEntry(dir)) {
-            return valid(*entry) ? entry->address : std::string{};
+            const bool bluetooth = entry->bus == BusBluetooth && entry->address.size() == 17;
+            return {bluetooth ? entry->address : std::string{}};
         }
     }
-    const unsigned vendor = SDL_GetJoystickVendorForID(id);
-    const unsigned product = SDL_GetJoystickProductForID(id);
-    // One controller can have several HID entries: they share its address
-    std::map<std::string, bool> controllers;
-    const QDir devices{QStringLiteral("/sys/bus/hid/devices")};
-    for (const QString& name : devices.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-        const auto entry = ReadHidEntry(devices.filePath(name));
-        if (entry && entry->vendor == vendor && entry->product == product) {
-            controllers[entry->address.empty() ? name.toStdString() : entry->address] =
-                valid(*entry);
+    const auto controllers =
+        ControllersOfModel(SDL_GetJoystickVendorForID(id), SDL_GetJoystickProductForID(id));
+    const bool any_bluetooth = std::any_of(controllers.begin(), controllers.end(),
+                                           [](const auto& c) { return c.bluetooth; });
+    if (controllers.size() == 1) {
+        return {controllers[0].bluetooth ? controllers[0].address : std::string{}};
+    }
+    return {{}, any_bluetooth};
+}
+
+/// True while a controller has a button held, read from its input nodes (kept open)
+bool RealButtonHeld(const RealController& controller) {
+    static std::map<QString, int> open_nodes;
+    for (const QString& event : controller.events) {
+        auto it = open_nodes.find(event);
+        if (it == open_nodes.end()) {
+            const int fd = ::open(event.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            it = open_nodes.emplace(event, fd).first;
+        }
+        if (it->second < 0) {
+            continue;
+        }
+        // (Its queue is not read otherwise: drained so the kernel keeps nothing for it)
+        std::array<char, 1024> drain;
+        while (::read(it->second, drain.data(), drain.size()) > 0) {
+        }
+        std::array<unsigned char, KEY_MAX / 8 + 1> keys{};
+        if (ioctl(it->second, EVIOCGKEY(keys.size()), keys.data()) < 0) {
+            ::close(it->second);
+            open_nodes.erase(it);
+            continue;
+        }
+        if (std::any_of(keys.begin(), keys.end(), [](unsigned char b) { return b != 0; })) {
+            return true;
         }
     }
-    if (controllers.size() == 1 && controllers.begin()->second) {
-        return controllers.begin()->first;
-    }
-    return {};
+    return false;
 }
 
 /// Asks BlueZ to disconnect a controller, which turns most controllers off
@@ -2843,10 +2913,7 @@ void MainWindow::RenderControllerOverlay() {
             if (hint.joined) {
                 return tr("%1 joined").arg(hint.name);
             }
-            if (hint.removed == 2) {
-                return tr("%1 turned off").arg(hint.name);
-            }
-            return hint.removed == 1 ? tr("%1 removed").arg(hint.name)
+            return hint.removed != 0 ? tr("%1 turned off").arg(hint.name)
                                      : tr("%1 left").arg(hint.name);
         };
         int width = 0;
@@ -2973,10 +3040,14 @@ void MainWindow::RenderControllerOverlay() {
     constexpr int bubble_gap = 6;
     constexpr int chip_h = 18;
     constexpr int chip_gap = 3;
-    constexpr int widest_chip = 26;
     const auto chip_width = [&](const QString& text) {
         return (std::max)(chip_h, chip_fm.horizontalAdvance(text) + 10);
     };
+    // The widest chip there can be (a stick move, "LS→", is wider than a button)
+    int widest_chip = 26;
+    for (int k = 0; k < 8; ++k) {
+        widest_chip = (std::max)(widest_chip, chip_width(chip(StickMoveButton + k).first));
+    }
     // An entry lives 5 seconds, then shrinks away
     constexpr qint64 press_life_ms = 5000;
     constexpr qint64 press_shrink_ms = 400;
@@ -3038,7 +3109,7 @@ void MainWindow::RenderControllerOverlay() {
         painter.setPen(Qt::NoPen);
     };
     // The row under the mouse shows its buttons where its history goes: swaps with the players
-    // above and below, and remove (turn off, for a Bluetooth controller)
+    // above and below, and Turn Off for a Bluetooth controller (false: it has none)
     overlay_buttons.clear();
     const auto neighbour = [this](std::size_t r, int step) {
         for (int k = static_cast<int>(r) + step;
@@ -3053,14 +3124,18 @@ void MainWindow::RenderControllerOverlay() {
         const auto& row = overlay_rows[r];
         const auto address = pad_bluetooth.find(row.pad);
         const bool turns_off = address != pad_bluetooth.end() && !address->second.empty();
-        const QString label = turns_off ? tr("Turn Off") : tr("Remove");
+        const QString label = tr("Turn Off");
         constexpr int round_w = 24;
-        const int remove_w = 22 + chip_fm.horizontalAdvance(label) + 10;
+        const int remove_w = turns_off ? 22 + chip_fm.horizontalAdvance(label) + 10 : 0;
         const int above = neighbour(r, -1);
         const int below = neighbour(r, 1);
         const int count_round = (above >= 0 ? 1 : 0) + (below >= 0 ? 1 : 0);
+        if (count_round == 0 && !turns_off) {
+            return false;
+        }
         const double x0 = 1 + controller_w + bubble_gap;
-        const double pill_w = 4 + count_round * (round_w + chip_gap) + remove_w + 4;
+        const double pill_w =
+            4 + count_round * (round_w + chip_gap) + remove_w + 4 - (turns_off ? 0 : chip_gap);
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(14, 14, 18, 200));
         painter.drawRoundedRect(QRectF(x0, at_y, pill_w, row_h), row_h / 2.0, row_h / 2.0);
@@ -3092,25 +3167,24 @@ void MainWindow::RenderControllerOverlay() {
         if (below >= 0) {
             arrow(1, below);
         }
+        if (!turns_off) {
+            return true;
+        }
         const QRectF rect = add(remove_w, 0, -1);
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(200, 50, 50, 230));
         painter.drawRoundedRect(rect, h / 2.0, h / 2.0);
-        // Its icon: a power symbol, or a cross
+        // A power symbol
         const QPointF c(rect.left() + 12, rect.center().y());
         painter.setPen(QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap));
         painter.setBrush(Qt::NoBrush);
-        if (turns_off) {
-            painter.drawArc(QRectF(c.x() - 5, c.y() - 4.5, 10, 10), 125 * 16, 290 * 16);
-            painter.drawLine(QPointF(c.x(), c.y() - 6), QPointF(c.x(), c.y()));
-        } else {
-            painter.drawLine(QPointF(c.x() - 4, c.y() - 4), QPointF(c.x() + 4, c.y() + 4));
-            painter.drawLine(QPointF(c.x() + 4, c.y() - 4), QPointF(c.x() - 4, c.y() + 4));
-        }
+        painter.drawArc(QRectF(c.x() - 5, c.y() - 4.5, 10, 10), 125 * 16, 290 * 16);
+        painter.drawLine(QPointF(c.x(), c.y() - 6), QPointF(c.x(), c.y()));
         painter.setFont(chip_font);
         painter.setPen(Qt::white);
         painter.drawText(rect.adjusted(22, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, label);
         painter.setPen(Qt::NoPen);
+        return true;
     };
     // Where each row is, for the mouse (a row drags onto another to swap them)
     overlay_hits.clear();
@@ -3135,8 +3209,8 @@ void MainWindow::RenderControllerOverlay() {
         } else {
             controller_bubble(row, blink, y);
         }
-        if (row.player == overlay_hover_player && row.pad != 0 && !overlay_dragging) {
-            row_buttons(r, y);
+        if (row.player == overlay_hover_player && row.pad != 0 && !overlay_dragging &&
+            row_buttons(r, y)) {
             y += row_h + row_gap;
             continue;
         }
@@ -3256,7 +3330,7 @@ bool MainWindow::HandleOverlayMouse(QEvent* event) {
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
             if (button->action == 0) {
-                LOG_INFO(Frontend, "console-mode: overlay remove P{}", button->player + 1);
+                LOG_INFO(Frontend, "console-mode: overlay turn off P{}", button->player + 1);
                 state.remove_requests.push_back(button->player);
             } else {
                 LOG_INFO(Frontend, "console-mode: overlay swap P{} <-> P{}", button->player + 1,
@@ -3334,7 +3408,57 @@ bool MainWindow::OverlayAnimating() const {
     return false;
 }
 
+void MainWindow::LearnBluetoothPads() {
+#ifdef __linux__
+    // Pads whose Bluetooth controller is unsure (several of their model): the one controller
+    // with a button held while just one of those pads has one held is that pad's
+    if (pad_bt_pending.empty()) {
+        return;
+    }
+    std::map<std::pair<unsigned, unsigned>, std::vector<u32>> by_model;
+    for (const u32 id : pad_bt_pending) {
+        by_model[{SDL_GetJoystickVendorForID(id), SDL_GetJoystickProductForID(id)}].push_back(id);
+    }
+    std::set<std::string> taken;
+    for (const auto& [id, address] : pad_bluetooth) {
+        if (!address.empty()) {
+            taken.insert(address);
+        }
+    }
+    for (const auto& [model, pads] : by_model) {
+        std::vector<RealController> controllers = ControllersOfModel(model.first, model.second);
+        std::erase_if(controllers, [&](const auto& c) { return taken.contains(c.address); });
+        std::vector<u32> pressed_pads;
+        for (const u32 id : pads) {
+            if (PadAnyButtonPressed(id)) {
+                pressed_pads.push_back(id);
+            }
+        }
+        if (pressed_pads.size() != 1) {
+            continue;
+        }
+        const RealController* pressed = nullptr;
+        int count = 0;
+        for (const auto& controller : controllers) {
+            if (RealButtonHeld(controller)) {
+                pressed = &controller;
+                ++count;
+            }
+        }
+        if (count != 1) {
+            continue;
+        }
+        const u32 id = pressed_pads[0];
+        pad_bluetooth[id] = pressed->bluetooth ? pressed->address : std::string{};
+        pad_bt_pending.erase(id);
+        LOG_INFO(Frontend, "console-mode: inst={} told apart by a button press: bluetooth={}", id,
+                 pressed->bluetooth ? pressed->address : std::string{"no"});
+    }
+#endif
+}
+
 void MainWindow::PollControllerActivity() {
+    LearnBluetoothPads();
     // Input shows faster than the 250ms assignment tick: redraw only when who is active changes
     // (or while the hints and history animate)
     if (overlay_rows.empty()) {
@@ -3605,6 +3729,12 @@ void MainWindow::ApplyConsoleControllerMode() {
                 if (benched_pads.erase(from)) {
                     benched_pads.insert(to);
                 }
+                if (const auto bt = pad_bluetooth.find(from); bt != pad_bluetooth.end()) {
+                    pad_bluetooth[to] = bt->second;
+                }
+                if (pad_bt_pending.erase(from)) {
+                    pad_bt_pending.insert(to);
+                }
             }
             builtin_pad_id = new_builtin;
         }
@@ -3845,15 +3975,25 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
-    // Players removed with their ✕: the controller sits out (as if it were gone) until it
-    // reconnects, and the player is free for the next controller to connect. A Bluetooth
-    // controller is disconnected, which turns most of them off: turned on, it joins again.
+    // Bluetooth controllers can be turned off from their player (Turn Off): Eden disconnects
+    // them, which turns most of them off, and turned on again they join as a new player. The
+    // controller sits out (as if it were gone) until then, and the next controller to connect
+    // takes the player. Wired controllers have no such button.
     {
         std::erase_if(pad_bluetooth, [&](const auto& e) { return !live.contains(e.first); });
+        std::erase_if(pad_bt_pending, [&](u32 id) { return !live.contains(id); });
 #ifdef __linux__
         for (const auto& [id, ident] : live) {
             if (!pad_bluetooth.contains(id)) {
-                pad_bluetooth[id] = PadBluetoothAddress(id);
+                const PadBluetooth found = FindPadBluetooth(id);
+                pad_bluetooth[id] = found.address;
+                if (found.unsure) {
+                    pad_bt_pending.insert(id);
+                }
+                LOG_INFO(Frontend, "console-mode: inst={} bluetooth={}", id,
+                         found.unsure            ? std::string{"unsure until a button press"}
+                         : found.address.empty() ? std::string{"no"}
+                                                 : found.address);
             }
         }
 #endif
@@ -3871,19 +4011,20 @@ void MainWindow::ApplyConsoleControllerMode() {
                 continue;
             }
             const u32 id = held->first;
+            if (pad_bluetooth[id].empty()) {
+                continue; // (Only a Bluetooth controller is turned off)
+            }
             pad_slots.erase(held);
             pad_identity.erase(id);
             benched_pads.insert(id);
             removed_at[player] = QDateTime::currentMSecsSinceEpoch();
             const std::string address = pad_bluetooth[id];
-            removed_off[player] = !address.empty();
+            removed_off[player] = true;
 #ifdef __linux__
-            if (!address.empty()) {
-                DisconnectBluetooth(address);
-            }
+            DisconnectBluetooth(address);
 #endif
-            LOG_INFO(Frontend, "console-mode: P{} removed, inst={} sits out{}", player + 1, id,
-                     address.empty() ? std::string{} : fmt::format(", turning off {}", address));
+            LOG_INFO(Frontend, "console-mode: P{} turned off, inst={} {}", player + 1, id,
+                     address);
         }
         std::erase_if(benched_pads, [&](u32 id) { return !live.contains(id); });
         std::erase_if(live, [&](const auto& e) { return benched_pads.contains(e.first); });
@@ -4751,9 +4892,12 @@ void MainWindow::ApplyConsoleControllerMode() {
                                            overlay_row_name[i]),
                                     gone != 0 ? 0u : pad, flash, flash_since});
             const auto address = pad_bluetooth.find(pad);
+            const int turn_off = address != pad_bluetooth.end() && !address->second.empty() ? 2
+                                 : pad_bt_pending.contains(pad)                            ? 1
+                                                                                           : 0;
             tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
                                 flash_since, ConsoleBindingSets()[slot_set[i]].profile_name,
-                                address != pad_bluetooth.end() && !address->second.empty()});
+                                turn_off});
         }
         {
             std::string handheld_name;

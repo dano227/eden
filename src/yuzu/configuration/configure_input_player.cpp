@@ -1209,12 +1209,10 @@ void ConfigureInputPlayer::BuildProfileCard() {
     card_delete = action(tr("Delete"), tr("Delete the selected profile; this player keeps its "
                                           "current mapping"));
     // Takes the profile off this player: its mappings from before the profile come back
-    card_remove = new QToolButton(profile_card);
-    card_remove->setText(QStringLiteral("\u2715"));
+    // (Inside the drop-down)
+    card_remove = ConfigurePlayerAssignment::AddClearButton(card_profiles);
     card_remove->setToolTip(tr("Remove the profile from this player"));
-    card_remove->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
     row->addWidget(card_profiles, 1);
-    row->addWidget(card_remove);
     row->addWidget(card_save);
     row->addWidget(card_save_new);
     row->addWidget(card_rename);

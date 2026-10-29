@@ -97,51 +97,44 @@ protected:
 };
 constexpr char PlayerMime[] = "application/x-eden-player";
 
-/// A drop-down with a ✕ inside it, left of its arrow, that clears it
-class ClearableCombo : public QComboBox {
+/// Keeps a drop-down's ✕ inside it, left of its arrow
+class ClearButtonPlacer : public QObject {
 public:
-    explicit ClearableCombo(QWidget* parent) : QComboBox(parent) {
-        clear_button = new QToolButton(this);
-        clear_button->setText(QStringLiteral("\u2715"));
-        clear_button->setCursor(Qt::ArrowCursor);
-        clear_button->setFixedSize(18, 18);
-        clear_button->setStyleSheet(ConfigurePlayerAssignment::Themed(QStringLiteral(
-            "QToolButton { border: none; border-radius: 9px; background: transparent; "
-            "color: muted-text; padding: 0px; }"
-            "QToolButton:hover { background: palette(highlight); "
-            "color: palette(highlighted-text); }")));
-        // (Room for it between the text and the arrow)
-        setStyleSheet(QStringLiteral("QComboBox { padding-right: 40px; }"));
-    }
-
-    QToolButton* clear_button;
+    ClearButtonPlacer(QComboBox* combo_, QToolButton* button_)
+        : QObject(combo_), combo{combo_}, button{button_} {}
 
 protected:
-    void resizeEvent(QResizeEvent* event) override {
-        QComboBox::resizeEvent(event);
-        clear_button->move(width() - 22 - clear_button->width(),
-                           (height() - clear_button->height()) / 2);
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (watched == combo && (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
+            button->move(combo->width() - 22 - button->width(),
+                         (combo->height() - button->height()) / 2);
+        }
+        return QObject::eventFilter(watched, event);
     }
+
+private:
+    QComboBox* combo;
+    QToolButton* button;
 };
 
-/// The red button that removes a player: a cross, or a power symbol when it turns the
-/// controller off
-QIcon RemoveIcon(bool power) {
-    QPixmap pixmap(QSize(14, 14) * 2);
-    pixmap.setDevicePixelRatio(2);
-    pixmap.fill(Qt::transparent);
-    QPainter painter{&pixmap};
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap));
-    if (power) {
+/// The power symbol on Turn Off: white, grey while it waits
+QIcon PowerIcon() {
+    const auto draw = [](const QColor& color) {
+        QPixmap pixmap(QSize(14, 14) * 2);
+        pixmap.setDevicePixelRatio(2);
+        pixmap.fill(Qt::transparent);
+        QPainter painter{&pixmap};
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(color, 2, Qt::SolidLine, Qt::RoundCap));
         painter.drawArc(QRectF(2, 2.5, 10, 10), 125 * 16, 290 * 16);
         painter.drawLine(QPointF(7, 1), QPointF(7, 7));
-    } else {
-        painter.drawLine(QPointF(3, 3), QPointF(11, 11));
-        painter.drawLine(QPointF(11, 3), QPointF(3, 11));
-    }
-    painter.end();
-    return QIcon{pixmap};
+        painter.end();
+        return pixmap;
+    };
+    QIcon icon;
+    icon.addPixmap(draw(Qt::white), QIcon::Normal);
+    icon.addPixmap(draw(QColor(138, 143, 150)), QIcon::Disabled);
+    return icon;
 }
 
 /// One player in the list: a click rumbles its controller, and a long press (or a drag) picks
@@ -248,6 +241,22 @@ private:
 };
 
 } // Anonymous namespace
+
+QToolButton* ConfigurePlayerAssignment::AddClearButton(QComboBox* combo) {
+    auto* button = new QToolButton(combo);
+    button->setText(QStringLiteral("\u2715"));
+    button->setCursor(Qt::ArrowCursor);
+    button->setFixedSize(18, 18);
+    button->setStyleSheet(Themed(QStringLiteral(
+        "QToolButton { border: none; border-radius: 9px; background: transparent; "
+        "color: muted-text; padding: 0px; }"
+        "QToolButton:hover { background: palette(highlight); "
+        "color: palette(highlighted-text); }")));
+    // (Room for it between the text and the arrow)
+    combo->setStyleSheet(QStringLiteral("QComboBox { padding-right: 40px; }"));
+    combo->installEventFilter(new ClearButtonPlacer(combo, button));
+    return button;
+}
 
 QString ConfigurePlayerAssignment::Themed(QString style) {
     if (!UISettings::IsDarkTheme()) {
@@ -498,31 +507,11 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     builtin_identify->setStyleSheet(OutlinedButtonStyle());
     picker_row->addWidget(builtin_identify);
     builtin_layout->addLayout(picker_row);
-    // The handheld's controller as a bubble, like a player's row: its ✕ removes it
-    builtin_bubble = new QFrame(builtin_row);
-    builtin_bubble->setObjectName(QStringLiteral("handheldBubble"));
-    builtin_bubble->setStyleSheet(
-        Themed(QStringLiteral("#handheldBubble { border: 1px solid palette(mid); "
-                              "border-radius: 8px; background: palette(base); }")));
-    auto* bubble_line = new QHBoxLayout(builtin_bubble);
-    bubble_line->setContentsMargins(10, 5, 6, 5);
-    builtin_bubble_label = new QLabel(builtin_bubble);
-    bubble_line->addWidget(builtin_bubble_label);
-    builtin_remove = new QToolButton(builtin_bubble);
-    builtin_remove->setText(QStringLiteral("\u2715"));
-    builtin_remove->setAutoRaise(true);
+    // The ✕ inside the picker removes the handheld's controller (auto-detect then skips it)
+    builtin_remove = AddClearButton(builtin_picker);
     builtin_remove->setToolTip(tr("Not the handheld's controller: remove it. Auto-detect will "
                                   "not pick it again until you allow it."));
-    bubble_line->addWidget(builtin_remove);
-    // The bubble as wide as the pad's name, with what it means beside it
-    builtin_bubble->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    auto* bubble_row = new QHBoxLayout();
-    bubble_row->addWidget(builtin_bubble);
-    builtin_bubble_info = new QLabel(builtin_row);
-    builtin_bubble_info->setObjectName(QStringLiteral("note"));
-    builtin_bubble_info->setWordWrap(true);
-    bubble_row->addWidget(builtin_bubble_info, 1);
-    builtin_layout->addLayout(bubble_row);
+    builtin_remove->hide();
     // A removed controller: said plainly, with the way to allow it again
     blocked_row = new QWidget(builtin_row);
     auto* blocked_line = new QHBoxLayout(blocked_row);
@@ -778,8 +767,6 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
                               .count();
         builtin_status->setText(tr("Waiting for a button press (%1 seconds)...")
                                     .arg(std::max<qint64>(0, left)));
-        // (Shown even beside the handheld's bubble, which hides this line otherwise)
-        builtin_status->setVisible(true);
         // (The line below counts down)
         builtin_identify->setText(tr("Press a button..."));
         return;
@@ -833,17 +820,16 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
                          : tr("Not currently connected.")));
     }
 
-    // The handheld's controller as a bubble with its ✕, while one is connected
+    // The picker shows the handheld's controller, with the ✕ inside it to remove it
     const bool shown = engine_active && !detected_name.empty();
-    builtin_bubble->setVisible(shown);
-    builtin_bubble_info->setVisible(shown);
-    builtin_status->setVisible(!shown);
-    if (shown) {
-        builtin_bubble_label->setText(QString::fromStdString(detected_name));
-        builtin_bubble_info->setText(
-            tr("%1 \u00b7 takes no player while external controllers are connected")
-                .arg(want_index > 0 ? tr("declared") : tr("auto-detected")));
+    const QString first = shown && want_index == 0
+                              ? tr("%1 (auto-detected)").arg(QString::fromStdString(detected_name))
+                              : tr("Auto-detect");
+    if (builtin_picker->itemText(0) != first) {
+        builtin_picker->setItemText(0, first);
     }
+    builtin_remove->setVisible(shown);
+    builtin_status->setVisible(true);
     // A removed controller, kept from auto-detect
     std::string blocked_name;
     {
@@ -909,13 +895,15 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                      QString::fromStdString(entry.name) + QLatin1Char('/') +
                      QString::fromStdString(entry.profile) +
                      (entry.leaving ? QStringLiteral("x") : QString{}) +
-                     (entry.bluetooth ? QStringLiteral("b") : QString{}) + QLatin1Char('|');
+                     QString::number(entry.turn_off) + QLatin1Char('|');
     }
     if (!handheld_has_player) {
         signature += QStringLiteral("h:") + QString::fromStdString(handheld_name);
     }
     if (signature != players_signature) {
         players_signature = signature;
+        const bool any_turn_off = std::any_of(players.begin(), players.end(),
+                                              [](const auto& e) { return e.turn_off != 0; });
         for (QFrame* row : player_rows) {
             players_list->removeWidget(row);
             row->hide();
@@ -951,7 +939,8 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
 
             // The profile the player's controller carries; picking one puts it on it, and
             // "No profile" (or the ✕ inside) takes it off: the mappings from before come back
-            auto* profile = new ClearableCombo(row);
+            auto* profile = new QComboBox(row);
+            auto* clear = AddClearButton(profile);
             profile->addItem(tr("No profile"));
             profile->addItems(profiles);
             // (Not found is -1: "No profile")
@@ -977,11 +966,11 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                         console.profile_requests.push_back(
                             {player, profile->itemText(index).toStdString()});
                     });
-            profile->clear_button->setToolTip(tr("Take the profile off P%1").arg(player + 1));
+            clear->setToolTip(tr("Take the profile off P%1").arg(player + 1));
             // (A profile renamed or deleted elsewhere shows as none: no ✕ for it)
-            profile->clear_button->setVisible(
+            clear->setVisible(
                 live && profiles.contains(QString::fromStdString(entry.profile)));
-            connect(profile->clear_button, &QToolButton::clicked, this, take_off);
+            connect(clear, &QToolButton::clicked, this, take_off);
             line->addWidget(profile);
 
             auto* up = new QToolButton(row);
@@ -1036,36 +1025,42 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             });
             line->addWidget(settings);
 
-            // Removing the player: red, apart from the rest. The controller sits out until it
-            // reconnects; a Bluetooth one is turned off, and turning it on joins it again.
-            line->addSpacing(6);
-            auto* remove = new QToolButton(row);
-            remove->setText(entry.bluetooth ? tr("Turn Off") : tr("Remove"));
-            remove->setIcon(RemoveIcon(entry.bluetooth));
-            remove->setIconSize(QSize(14, 14));
-            remove->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-            remove->setCursor(Qt::PointingHandCursor);
-            remove->setStyleSheet(Themed(QStringLiteral(
-                "QToolButton { border: 1px solid #c83c3c; border-radius: 6px; "
-                "padding: 3px 10px; background: #c83c3c; color: white; font-weight: bold; }"
-                "QToolButton:hover { background: #a82c2c; border-color: #a82c2c; }"
-                "QToolButton:disabled { background: transparent; border-color: palette(mid); "
-                "color: palette(mid); }")));
-            remove->setToolTip(
-                entry.bluetooth
-                    ? tr("Turns off P%1's controller and frees the player. Turn the controller "
-                         "on to join again.")
-                          .arg(player + 1)
-                    : tr("Frees P%1 for the next controller that connects. This controller "
-                         "sits out until it is turned off and on again.")
-                          .arg(player + 1));
-            remove->setEnabled(live);
-            connect(remove, &QToolButton::clicked, this, [player] {
-                auto& console = Common::GetControllerConsoleState();
-                std::scoped_lock lock{console.mutex};
-                console.remove_requests.push_back(player);
-            });
-            line->addWidget(remove);
+            // Turn Off, for a Bluetooth controller: red, apart from the rest. Eden disconnects
+            // it, which turns most controllers off; turned on again, it joins as a new player.
+            // (Kept as room on the other rows while one has it, so the buttons stay in line.)
+            if (any_turn_off) {
+                line->addSpacing(6);
+                auto* turn_off = new QToolButton(row);
+                turn_off->setText(tr("Turn Off"));
+                turn_off->setIcon(PowerIcon());
+                turn_off->setIconSize(QSize(14, 14));
+                turn_off->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+                turn_off->setCursor(Qt::PointingHandCursor);
+                turn_off->setStyleSheet(Themed(QStringLiteral(
+                    "QToolButton { border: 1px solid #c83c3c; border-radius: 6px; "
+                    "padding: 3px 10px; background: #c83c3c; color: white; font-weight: bold; }"
+                    "QToolButton:hover { background: #a82c2c; border-color: #a82c2c; }"
+                    "QToolButton:disabled { background: transparent; border-color: palette(mid); "
+                    "color: palette(mid); }")));
+                turn_off->setToolTip(
+                    entry.turn_off == 2
+                        ? tr("Turns off P%1's controller and frees the player. Turn the "
+                             "controller on to join again.")
+                              .arg(player + 1)
+                        : tr("Press a button on this controller first, so Eden can tell it "
+                             "from the others like it."));
+                turn_off->setEnabled(live && entry.turn_off == 2);
+                QSizePolicy keep = turn_off->sizePolicy();
+                keep.setRetainSizeWhenHidden(true);
+                turn_off->setSizePolicy(keep);
+                turn_off->setVisible(entry.turn_off != 0);
+                connect(turn_off, &QToolButton::clicked, this, [player] {
+                    auto& console = Common::GetControllerConsoleState();
+                    std::scoped_lock lock{console.mutex};
+                    console.remove_requests.push_back(player);
+                });
+                line->addWidget(turn_off);
+            }
 
             players_list->addWidget(row);
             player_rows.push_back(row);

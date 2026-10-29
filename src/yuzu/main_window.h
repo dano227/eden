@@ -582,8 +582,11 @@ private:
     /// When each player was last removed, and whether its controller was turned off
     std::array<qint64, 10> removed_at{};
     std::array<bool, 10> removed_off{};
-    /// Each live pad's Bluetooth address ("" when it is not on Bluetooth or unknown)
+    /// Each live pad's Bluetooth address ("" when it is not on Bluetooth or unknown), and the
+    /// pads that may be on Bluetooth but can't be told apart from others of their model yet
     std::map<u32, std::string> pad_bluetooth;
+    std::set<u32> pad_bt_pending;
+    void LearnBluetoothPads();
     /// connection instance -> stable identity (serial, else model GUID), for matching a
     /// returning pad that comes back under a new instance
     std::map<u32, std::string> pad_identity;

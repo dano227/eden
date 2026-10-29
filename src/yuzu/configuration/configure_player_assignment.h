@@ -54,6 +54,8 @@ public:
     static QColor Accent(const QWidget* widget);
     /// A player's colour, as the overlay and the player badges draw it
     static QColor PlayerColor(int player);
+    /// A ✕ inside a drop-down, left of its arrow (hidden or shown by the caller)
+    static QToolButton* AddClearButton(QComboBox* combo);
     /// Lets the open lists of a widget's drop-downs follow ModernComboStyle
     static void ModernizeCombos(QWidget* root);
 
@@ -99,11 +101,8 @@ private:
     QComboBox* builtin_picker = nullptr;
     QPushButton* builtin_identify = nullptr;
     QLabel* builtin_status = nullptr;
-    /// The handheld's controller as a bubble (its ✕ removes it), and the removed one kept from
-    /// auto-detect, with the way to allow it again
-    QFrame* builtin_bubble = nullptr;
-    QLabel* builtin_bubble_label = nullptr;
-    QLabel* builtin_bubble_info = nullptr;
+    /// The ✕ inside the picker that removes the handheld's controller, and the removed one
+    /// kept from auto-detect, with the way to allow it again
     QToolButton* builtin_remove = nullptr;
     QWidget* blocked_row = nullptr;
     QLabel* blocked_label = nullptr;
