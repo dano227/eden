@@ -874,6 +874,13 @@ void ConfigureInput::UpdateTabArrows() {
             tabs->tabBar()->setTabButton(index, QTabBar::LeftSide, left);
             tabs->tabBar()->setTabButton(index, QTabBar::RightSide, right);
         }
+        // Above the dark themes' bubble layer, which would hide them (and shown, but mid-drag)
+        if (!own_dragging) {
+            left->show();
+            right->show();
+        }
+        left->raise();
+        right->raise();
         left->setEnabled(player > 0);
         left->setToolTip(tr("Swap with P%1").arg(player));
         right->setEnabled(player < last_player);

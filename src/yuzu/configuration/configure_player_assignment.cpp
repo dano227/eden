@@ -753,10 +753,11 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
     builtin_bubble->setVisible(shown);
     builtin_status->setVisible(!shown);
     if (shown) {
-        builtin_bubble_label->setText(
-            tr("%1 \u00b7 %2 \u00b7 takes no player while external controllers are connected")
-                .arg(QString::fromStdString(detected_name))
-                .arg(want_index > 0 ? tr("declared") : tr("auto-detected")));
+        builtin_bubble_label->setText(QString::fromStdString(detected_name));
+        builtin_bubble_label->setToolTip(
+            tr("%1 the handheld's controller. It takes no player while external controllers "
+               "are connected.")
+                .arg(want_index > 0 ? tr("Declared as") : tr("Auto-detected as")));
     }
     // A removed controller, kept from auto-detect
     std::string blocked_name;
@@ -948,7 +949,8 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             QSizePolicy keep = remove->sizePolicy();
             keep.setRetainSizeWhenHidden(true);
             remove->setSizePolicy(keep);
-            remove->setVisible(!entry.profile.empty());
+            // (A profile renamed or deleted elsewhere shows as none: no ✕ for it)
+            remove->setVisible(profiles.contains(QString::fromStdString(entry.profile)));
             remove->setEnabled(live);
             connect(remove, &QToolButton::clicked, this, [player] {
                 auto& console = Common::GetControllerConsoleState();
