@@ -1275,6 +1275,7 @@ void MainWindow::WebBrowserRequestExit() {
 
 void MainWindow::InitializeWidgets() {
     render_window = new GRenderWindow(this, input_subsystem);
+    render_window->installEventFilter(this);
     render_window->hide();
 
     game_list = new GameList(QtCommon::vfs, QtCommon::provider.get(), *play_time_manager,
@@ -2830,13 +2831,9 @@ void MainWindow::RenderControllerOverlay() {
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::TextAntialiasing);
     painter.setPen(Qt::NoPen);
-    int y = 1;
-    for (std::size_t r = 0; r < overlay_rows.size(); ++r) {
-        const auto& row = overlay_rows[r];
-        const bool blink = overlay_blink[r];
+    // The controller bubble: its state lights it (blue held, green joined, red left)
+    const auto controller_bubble = [&](const OverlayRow& row, bool blink, int at_y) {
         const bool gone = row.pad == 0;
-
-        // The controller bubble: its state lights it (blue held, green joined, red left)
         QColor fill(14, 14, 18, 175);
         if (row.flash == 2) {
             if (blink) {
@@ -2847,23 +2844,48 @@ void MainWindow::RenderControllerOverlay() {
         } else if (blink) {
             fill = QColor(45, 160, 80, 200);
         }
+        painter.setPen(Qt::NoPen);
         painter.setBrush(fill);
-        painter.drawRoundedRect(QRectF(1, y, controller_w, row_h), row_h / 2.0, row_h / 2.0);
+        painter.drawRoundedRect(QRectF(1, at_y, controller_w, row_h), row_h / 2.0, row_h / 2.0);
         QColor badge = player_color(row.player);
         if (gone) {
             badge.setAlpha(110);
         }
         painter.setBrush(badge);
-        const QRectF badge_rect(1 + inner, y + 5, badge_w, row_h - 10);
+        const QRectF badge_rect(1 + inner, at_y + 5, badge_w, row_h - 10);
         painter.drawRoundedRect(badge_rect, badge_rect.height() / 2, badge_rect.height() / 2);
         painter.setFont(badge_font);
         painter.setPen(Qt::white);
         painter.drawText(badge_rect, Qt::AlignCenter, QStringLiteral("P%1").arg(row.player + 1));
         painter.setFont(name_font);
         painter.setPen(gone ? QColor(255, 255, 255, 120) : QColor(240, 240, 240));
-        painter.drawText(QRect(1 + inner + badge_w + 8, y, name_w + 4, row_h),
+        painter.drawText(QRect(1 + inner + badge_w + 8, at_y, name_w + 4, row_h),
                          Qt::AlignVCenter | Qt::AlignLeft, overlay_row_name[row.player]);
         painter.setPen(Qt::NoPen);
+    };
+    // Where each row is, for the mouse (a row drags onto another to swap them)
+    overlay_hits.clear();
+    int drag_row = -1;
+    int drag_y = 0;
+    int y = 1;
+    for (std::size_t r = 0; r < overlay_rows.size(); ++r) {
+        const auto& row = overlay_rows[r];
+        const bool blink = overlay_blink[r];
+        overlay_hits.emplace_back(row.player, QRect(1, y, width - 2, row_h));
+        if (overlay_dragging && row.player == overlay_drag_player) {
+            // Where the dragged row came from: an empty slot (the row follows the mouse)
+            QColor edge = player_color(row.player);
+            edge.setAlpha(150);
+            painter.setPen(QPen(edge, 1.5, Qt::DashLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRoundedRect(QRectF(1.5, y + 0.5, controller_w - 1, row_h - 1),
+                                    row_h / 2.0, row_h / 2.0);
+            painter.setPen(Qt::NoPen);
+            drag_row = static_cast<int>(r);
+            drag_y = y;
+        } else {
+            controller_bubble(row, blink, y);
+        }
 
         // The history bubble: the last presses, newest first and brightest, each shrinking
         // away at the far end as it expires (and the bubble with them)
@@ -2905,8 +2927,100 @@ void MainWindow::RenderControllerOverlay() {
         }
         y += row_h + row_gap;
     }
+    // The dragged row, last, over the others
+    if (drag_row >= 0) {
+        const int at_y = std::clamp(drag_y + overlay_drag_dy, 0, height - row_h - 1);
+        controller_bubble(overlay_rows[static_cast<std::size_t>(drag_row)],
+                          overlay_blink[static_cast<std::size_t>(drag_row)], at_y);
+    }
     painter.end();
     publish(Common::GetControllerOverlayFrame(), &image);
+}
+
+bool MainWindow::HandleOverlayMouse(QEvent* event) {
+    const auto type = event->type();
+    if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove &&
+        type != QEvent::MouseButtonRelease) {
+        return false;
+    }
+    bool shown = false;
+    {
+        auto& frame = Common::GetControllerOverlayFrame();
+        std::scoped_lock lock{frame.mutex};
+        shown = frame.enabled;
+    }
+    if (!shown || overlay_hits.empty() || !render_window) {
+        overlay_drag_player = -1;
+        overlay_dragging = false;
+        return false;
+    }
+    // The cursor in the overlay image: the overlay is drawn at its own size, 4 pixels in from
+    // the top-left of the game's picture
+    const auto& layout = render_window->GetFramebufferLayout();
+    const qreal ratio = render_window->devicePixelRatioF();
+    const QPointF logical = render_window->mapFromGlobal(QCursor::pos());
+    const QPoint at(static_cast<int>(logical.x() * ratio) - static_cast<int>(layout.screen.left) - 4,
+                    static_cast<int>(logical.y() * ratio) - static_cast<int>(layout.screen.top) - 4);
+    const auto row_at = [this](QPoint point) {
+        for (const auto& [player, rect] : overlay_hits) {
+            if (rect.contains(point)) {
+                return player;
+            }
+        }
+        return -1;
+    };
+    const auto* mouse = static_cast<QMouseEvent*>(event);
+    if (type == QEvent::MouseButtonPress) {
+        if (mouse->button() != Qt::LeftButton) {
+            return false;
+        }
+        const int player = row_at(at);
+        if (player < 0) {
+            return false; // the game's
+        }
+        overlay_drag_player = player;
+        overlay_press = at;
+        overlay_drag_dy = 0;
+        overlay_dragging = false;
+        return true;
+    }
+    if (overlay_drag_player < 0) {
+        return false;
+    }
+    if (type == QEvent::MouseMove) {
+        const int dy = at.y() - overlay_press.y();
+        if (!overlay_dragging && std::abs(dy) < QApplication::startDragDistance()) {
+            return true;
+        }
+        overlay_dragging = true;
+        overlay_drag_dy = dy;
+        RenderControllerOverlay();
+        return true;
+    }
+    // Released: dropped on another row swaps the two players; a click rumbles the controller
+    const int player = overlay_drag_player;
+    const bool dragged = overlay_dragging;
+    overlay_drag_player = -1;
+    overlay_dragging = false;
+    overlay_drag_dy = 0;
+    if (dragged) {
+        const int target = row_at(QPoint(10, at.y()));
+        if (target >= 0 && target != player) {
+            LOG_INFO(Frontend, "console-mode: overlay swap P{} <-> P{}", player + 1, target + 1);
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            state.swap_requests.emplace_back(player, target);
+        }
+        RenderControllerOverlay();
+        return true;
+    }
+    if (Settings::values.vibration_enabled.GetValue() &&
+        Settings::values.players.GetValue()[player].vibration_enabled) {
+        auto& state = Common::GetControllerConsoleState();
+        std::scoped_lock lock{state.mutex};
+        state.rumble_requests.push_back(player);
+    }
+    return true;
 }
 
 bool MainWindow::OverlayAnimating() const {
@@ -4360,6 +4474,10 @@ void MainWindow::ClearRuntimeCheats() {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // The controller overlay takes the mouse over its rows (drag to swap, click to rumble)
+    if (watched == render_window && HandleOverlayMouse(event)) {
+        return true;
+    }
     if (watched == ui->menu_Cheats && event->type() == QEvent::MouseButtonRelease) {
         const auto* mouse_event = static_cast<QMouseEvent*>(event);
         auto* action = ui->menu_Cheats->actionAt(mouse_event->pos());

@@ -636,6 +636,14 @@ private:
     std::set<u32> overlay_active_pads;
     /// Polls controller input faster than the assignment tick, for the blue highlight
     QTimer console_activity_timer;
+    /// The overlay's player rows as drawn (player, rectangle in the overlay image), for the
+    /// mouse: a row drags onto another to swap them, a click rumbles its controller
+    std::vector<std::pair<int, QRect>> overlay_hits;
+    int overlay_drag_player = -1;
+    int overlay_drag_dy = 0;
+    bool overlay_dragging = false;
+    QPoint overlay_press;
+    bool HandleOverlayMouse(QEvent* event);
     /// The player whose tab the next settings dialog opens on (-1: as usual)
     int open_player_tab = -1;
     /// Under gamescope, makes a window fill the screen (see the definition)
