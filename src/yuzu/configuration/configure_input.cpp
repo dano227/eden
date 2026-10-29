@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <thread>
 
 #include "common/settings.h"
@@ -250,19 +251,21 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
                 return r.player == static_cast<int>(i);
             });
             bool shown = true;
-            QColor label;
+            const QColor label; // the tab's own text colour: the bubbles colour themselves
+            tab_lit[i] = 0;
             if (automatic) {
                 shown = engine_active && row != rows.end();
-                // Red (leaving) wins, then blue (input held), then the green connect blink
+                // As the menu bar's chips light: red when the controller left, then input held,
+                // then the green blink when a controller takes the player
                 const long long elapsed = shown ? now - row->flash_since : 0;
                 const bool blink = shown && row->flash != 0 && elapsed < flash_ms &&
                                    (elapsed / 125) % 2 == 0;
                 if (blink && row->flash == 2) {
-                    label = QColor(200, 50, 50);
+                    tab_lit[i] = 3;
                 } else if (shown && row->active && !row->leaving) {
-                    label = QColor(50, 110, 220);
+                    tab_lit[i] = 1;
                 } else if (blink) {
-                    label = QColor(40, 160, 70);
+                    tab_lit[i] = 2;
                 }
             }
             if (tabs && !tab_dragging) {
@@ -366,10 +369,13 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
             for (std::size_t i = 0; i < player_tabs.size(); ++i) {
                 if (const int index = tabs->indexOf(player_tabs[i]); index >= 0) {
                     const QVariant tab_data =
-                        pills ? QVariant(ConfigurePlayerAssignment::PlayerColor(static_cast<int>(i)))
+                        pills ? QVariant(QVariantList{
+                                    ConfigurePlayerAssignment::PlayerColor(static_cast<int>(i)),
+                                    tab_lit[i]})
                               : QVariant{};
                     if (bar->tabData(index) != tab_data) {
                         bar->setTabData(index, tab_data);
+                        bar->update(); // (lit or not: the bubble repaints)
                     }
                 }
             }
@@ -502,6 +508,47 @@ void ConfigureInput::PropagatePlayerNumberChanged(size_t player_index, bool chec
     }
 }
 
+namespace {
+
+/// A player tab's colour and how it is lit (0 idle, 1 input held, 2 green blink, 3 red blink),
+/// as its data carries them; nothing for the other tabs
+struct PlayerTabLook {
+    QColor accent;
+    int lit = 0;
+};
+
+std::optional<PlayerTabLook> TabLook(const QVariant& data) {
+    if (data.metaType() != QMetaType::fromType<QVariantList>()) {
+        return std::nullopt;
+    }
+    const QVariantList list = data.toList();
+    if (list.size() != 2) {
+        return std::nullopt;
+    }
+    return PlayerTabLook{list[0].value<QColor>(), list[1].toInt()};
+}
+
+/// Like the menu bar's chips: an outline in the player's colour, filled while its controller
+/// has an input held; the selected tab the other way round. Blinks fill green or red.
+struct TabPaint {
+    bool filled;
+    QColor fill;
+    QColor ink;
+};
+
+TabPaint PaintFor(const PlayerTabLook& look, bool selected) {
+    if (look.lit == 3) {
+        return {true, QColor(200, 50, 50), QColor(Qt::white)};
+    }
+    if (look.lit == 2) {
+        return {true, QColor(45, 160, 80), QColor(Qt::white)};
+    }
+    const bool filled = selected != (look.lit == 1);
+    return {filled, look.accent, filled ? QColor(Qt::white) : look.accent};
+}
+
+} // Anonymous namespace
+
 PlayerTabStyle::PlayerTabStyle(const QString& base) : QProxyStyle(base) {}
 
 void PlayerTabStyle::drawControl(ControlElement element, const QStyleOption* option,
@@ -521,43 +568,37 @@ void PlayerTabStyle::drawControl(ControlElement element, const QStyleOption* opt
         }
     }
     // Only a player tab is a bubble, in its player's colour; the others stay as they were
-    const QVariant data = index >= 0 ? bar->tabData(index) : QVariant{};
-    if (data.metaType() != QMetaType::fromType<QColor>()) {
+    const auto look = index >= 0 ? TabLook(bar->tabData(index)) : std::nullopt;
+    if (!look) {
         QProxyStyle::drawControl(element, option, painter, widget);
         return;
     }
-    const QColor accent = data.value<QColor>();
     const bool selected = tab->state & State_Selected;
+    const TabPaint paint = PaintFor(*look, selected);
     if (element == CE_TabBarTabShape) {
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);
         const QRectF pill = QRectF(tab->rect).adjusted(2, 3, -2, -3);
-        if (selected) {
+        if (paint.filled) {
             painter->setPen(Qt::NoPen);
-            painter->setBrush(accent);
+            painter->setBrush(paint.fill);
         } else {
-            QColor edge = accent;
-            edge.setAlpha(170);
-            painter->setPen(QPen(edge, 1.5));
-            QColor fill = accent;
-            fill.setAlpha(tab->state & State_MouseOver ? 45 : 0);
-            painter->setBrush(fill);
+            painter->setPen(QPen(look->accent, 1.5));
+            QColor hover = look->accent;
+            hover.setAlpha(tab->state & State_MouseOver ? 45 : 0);
+            painter->setBrush(hover);
         }
         painter->drawRoundedRect(pill, pill.height() / 2, pill.height() / 2);
         painter->restore();
         return;
     }
-    // The label: white and bold on the filled tab, else in the player's colour, which reads on
-    // a light tab bar and a dark one (Windows in dark mode keeps light tabs with white text);
-    // a flash colour wins
+    // The label: bold, white on a filled tab, else in the player's colour
     QStyleOptionTab label{*tab};
-    const QColor flash = bar->tabTextColor(index);
-    const QColor text = selected ? QColor(Qt::white) : (flash.isValid() ? flash : accent);
-    label.palette.setColor(QPalette::WindowText, text);
-    label.palette.setColor(QPalette::ButtonText, text);
+    label.palette.setColor(QPalette::WindowText, paint.ink);
+    label.palette.setColor(QPalette::ButtonText, paint.ink);
     painter->save();
     QFont font = painter->font();
-    font.setBold(selected);
+    font.setBold(true);
     painter->setFont(font);
     QProxyStyle::drawControl(element, &label, painter, widget);
     painter->restore();
@@ -593,22 +634,20 @@ void PlayerTabOverlay::paintEvent(QPaintEvent*) {
     painter.setRenderHint(QPainter::Antialiasing);
     const int hovered = bar->underMouse() ? bar->tabAt(bar->mapFromGlobal(QCursor::pos())) : -1;
     const auto bubble = [&](int i, QRect tab, bool around_arrows) {
-        const QColor accent = bar->tabData(i).value<QColor>();
-        const bool selected = i == bar->currentIndex();
+        const auto look = TabLook(bar->tabData(i));
+        const TabPaint paint = PaintFor(*look, i == bar->currentIndex());
         const QRectF pill = QRectF(tab).adjusted(2, 3, -2, -3);
-        if (selected) {
+        if (paint.filled) {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(accent);
+            painter.setBrush(paint.fill);
         } else {
-            QColor edge = accent;
-            edge.setAlpha(170);
-            painter.setPen(QPen(edge, 1.5));
-            QColor fill = accent;
-            fill.setAlpha(i == hovered ? 45 : 0);
-            painter.setBrush(fill);
+            painter.setPen(QPen(look->accent, 1.5));
+            QColor hover = look->accent;
+            hover.setAlpha(i == hovered ? 45 : 0);
+            painter.setBrush(hover);
         }
         painter.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2);
-        // The label, between the tab's arrows; a flash colours it as on the tabs it covers
+        // The label, between the tab's arrows
         QRect text = tab;
         if (around_arrows) {
             if (const QWidget* left = bar->tabButton(i, QTabBar::LeftSide)) {
@@ -619,16 +658,14 @@ void PlayerTabOverlay::paintEvent(QPaintEvent*) {
             }
         }
         QFont font = bar->font();
-        font.setBold(selected);
+        font.setBold(true);
         painter.setFont(font);
-        const QColor flash = bar->tabTextColor(i);
-        painter.setPen(selected ? QColor(Qt::white)
-                                : (flash.isValid() ? flash : QColor(0xEF, 0xF0, 0xF1)));
+        painter.setPen(paint.ink);
         painter.drawText(text, Qt::AlignCenter, bar->tabText(i));
     };
     for (int i = 0; i < bar->count(); ++i) {
-        const QVariant tab_data = bar->tabData(i);
-        if (tab_data.metaType() != QMetaType::fromType<QColor>() || !bar->isTabVisible(i)) {
+        const auto look = TabLook(bar->tabData(i));
+        if (!look || !bar->isTabVisible(i)) {
             continue;
         }
         const QRect tab = bar->tabRect(i);
@@ -636,7 +673,7 @@ void PlayerTabOverlay::paintEvent(QPaintEvent*) {
         painter.fillRect(tab, background);
         if (i == drag_index) {
             // Where the dragged tab came from: an empty slot
-            QColor edge = tab_data.value<QColor>();
+            QColor edge = look->accent;
             edge.setAlpha(90);
             painter.setPen(QPen(edge, 1, Qt::DashLine));
             painter.setBrush(Qt::NoBrush);
@@ -888,6 +925,23 @@ void ConfigureInput::UpdateTabArrows() {
         }
         left->raise();
         right->raise();
+        // In the tab's ink, like the chips' arrows: white on a filled tab, else its colour
+        if (const auto look = TabLook(tabs->tabBar()->tabData(index))) {
+            const TabPaint paint = PaintFor(*look, index == tabs->currentIndex());
+            const QString style =
+                QStringLiteral("QToolButton { width: 16px; height: 16px; padding: 0px; "
+                               "border: none; background: transparent; color: %1; }"
+                               "QToolButton:disabled { color: rgba(%2, %3, %4, 90); }")
+                    .arg(paint.ink.name())
+                    .arg(paint.ink.red())
+                    .arg(paint.ink.green())
+                    .arg(paint.ink.blue());
+            for (QToolButton* button : {left.data(), right.data()}) {
+                if (button->styleSheet() != style) {
+                    button->setStyleSheet(style);
+                }
+            }
+        }
         left->setEnabled(player > 0);
         left->setToolTip(tr("Swap with P%1").arg(player));
         right->setEnabled(player < last_player);

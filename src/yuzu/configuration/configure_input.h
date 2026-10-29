@@ -157,6 +157,9 @@ private:
     bool tab_dragging = false;
     std::array<QString, 8> player_tab_titles{};
     std::vector<Common::ControllerConsoleState::PlayerRow> last_rows;
+    /// How each player tab is lit, as the menu bar's chips (0 idle, 1 input held, 2 green
+    /// blink, 3 red blink)
+    std::array<int, 8> tab_lit{};
     std::array<QPointer<QToolButton>, 8> tab_lefts;
     std::array<QPointer<QToolButton>, 8> tab_rights;
     /// The tab to select once its player shows (the controller a drag or an arrow moved)
