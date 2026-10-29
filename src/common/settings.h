@@ -206,6 +206,10 @@ struct Values {
     /// Show the controller debug overlay (the real pad state plus the logic's actions)
     SwitchableSetting<bool> console_debug_overlay{linkage, true, "console_debug_overlay",
                                                   Category::LibraryApplet};
+    /// Modern Console: the input profile each player number starts a session with, by name,
+    /// comma-separated in player order (empty: the player's usual controls)
+    Setting<std::string> modern_seat_profiles{linkage, std::string{}, "modern_seat_profiles",
+                                              Category::LibraryApplet};
     /// Name a controller on screen for a moment when it takes a player or leaves one
     SwitchableSetting<bool> console_hints{linkage, true, "console_hints",
                                           Category::LibraryApplet};

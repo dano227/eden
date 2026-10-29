@@ -4,6 +4,7 @@
 // Static Qt on macOS doesn't use Vulkan
 // Other platforms do, and thus have conflicting VulkanMemoryAllocator symbols
 #include <cmath>
+#include <sstream>
 #include "core/launch_params.h"
 #if defined(QT_STATICPLUGIN) && !defined(__APPLE__)
 #undef VMA_IMPLEMENTATION
@@ -1882,10 +1883,21 @@ void MainWindow::RestoreConsoleProfile() {
     }
     console_profile.reset();
     game_profiles.reset();
+    session_sets.reset();
+}
+
+Settings::PlayerInput& MainWindow::SessionSet(int set) {
+    if (game_profiles && !(*game_profiles)[set].profile_name.empty()) {
+        return (*game_profiles)[set];
+    }
+    if (!session_sets) {
+        session_sets = *console_profile;
+    }
+    return (*session_sets)[set];
 }
 
 std::array<Settings::PlayerInput, 10> MainWindow::ConsoleBindingSets() const {
-    auto sets = *console_profile;
+    auto sets = session_sets ? *session_sets : *console_profile;
     if (game_profiles) {
         for (size_t i = 0; i < sets.size(); ++i) {
             if (!(*game_profiles)[i].profile_name.empty()) {
@@ -1999,6 +2011,56 @@ bool MergeMappings(Array& profile, const Array& before, const Array& after) {
 
 } // Anonymous namespace
 
+void MainWindow::ApplySeatProfiles() {
+    const std::string stored = Settings::values.modern_seat_profiles.GetValue();
+    std::vector<std::string> seats;
+    std::stringstream entries{stored};
+    for (std::string entry; std::getline(entries, entry, ',');) {
+        seats.push_back(entry);
+    }
+    std::optional<InputProfiles> input_profiles;
+    for (size_t i = 0; i < seats.size() && i < 8; ++i) {
+        if (seats[i].empty()) {
+            continue;
+        }
+        if (!input_profiles) {
+            input_profiles.emplace();
+        }
+        const auto read = input_profiles->PeekProfile(seats[i], i);
+        if (!read) {
+            LOG_INFO(Frontend, "console-mode: P{} seat profile \"{}\" is gone", i + 1, seats[i]);
+            SetSeatProfile(static_cast<int>(i), {});
+            continue;
+        }
+        ApplyProfileMappings((*session_sets)[i], *read);
+        (*session_sets)[i].profile_name = seats[i];
+        LOG_INFO(Frontend, "console-mode: P{} starts with its seat profile \"{}\"", i + 1,
+                 seats[i]);
+    }
+}
+
+void MainWindow::SetSeatProfile(int player, const std::string& name) {
+    if (player < 0 || player >= 8) {
+        return;
+    }
+    std::vector<std::string> seats;
+    std::stringstream entries{Settings::values.modern_seat_profiles.GetValue()};
+    for (std::string entry; std::getline(entries, entry, ',');) {
+        seats.push_back(entry);
+    }
+    seats.resize(8);
+    seats[static_cast<size_t>(player)] = name;
+    std::string joined;
+    for (size_t i = 0; i < seats.size(); ++i) {
+        joined += (i ? "," : "") + seats[i];
+    }
+    // (Nothing stored when no seat has a profile)
+    if (joined.find_first_not_of(',') == std::string::npos) {
+        joined.clear();
+    }
+    Settings::values.modern_seat_profiles.SetValue(joined);
+}
+
 void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput, 10>& before) {
     if (!console_profile) {
         return;
@@ -2043,9 +2105,11 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
         // on the handheld's own pad goes to player one's set, the one it carries everywhere.
         const auto own = pad_slots.find(builtin_pad_id);
         size_t target = static_cast<size_t>(slot_set[i]);
-        auto& p = (*console_profile)[target];
-        bool edited = MergeMappings(p.buttons, b.buttons, a.buttons);
-        edited = MergeMappings(p.analogs, b.analogs, a.analogs) || edited;
+        // For this session only: the user's own setup is the manual modes'
+        auto& p = SessionSet(static_cast<int>(target));
+        bool remapped = MergeMappings(p.buttons, b.buttons, a.buttons);
+        remapped = MergeMappings(p.analogs, b.analogs, a.analogs) || remapped;
+        bool edited = remapped;
         // An external pad never gets the handheld's own non-SDL motion (a DSU server on the
         // deck): on a player the handheld does not hold, that binding being absent is the
         // engine's doing, never an edit, and must not wipe it from the handheld's set (a swap
@@ -2053,7 +2117,7 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
         auto edited_motions = a.motions;
         if (target != 0 || !(builtin_pad_id && own != pad_slots.end() &&
                              own->second == static_cast<int>(i))) {
-            const auto& handheld_motions = (*console_profile)[0].motions;
+            const auto& handheld_motions = SessionSet(0).motions;
             for (size_t k = 0; k < edited_motions.size(); ++k) {
                 const std::string& kept = p.motions[k];
                 const bool handheld_motion =
@@ -2066,27 +2130,34 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
             }
         }
         edited = MergeMappings(p.motions, b.motions, edited_motions) || edited;
-        // The profile picked in the player's tab (its name, for the tab to show it again)
-        if (a.profile_name != b.profile_name) {
-            p.profile_name = a.profile_name;
-            edited = true;
-        }
-        if (a.controller_type != b.controller_type || a.vibration_enabled != b.vibration_enabled ||
-            a.vibration_strength != b.vibration_strength) {
-            p.controller_type = a.controller_type;
-            p.vibration_enabled = a.vibration_enabled;
-            p.vibration_strength = a.vibration_strength;
-            edited = true;
+        // Remapped by hand and not saved to the profile: the controls are no longer the
+        // profile's, for the player or its seat
+        if (remapped && !p.profile_name.empty()) {
+            InputProfiles input_profiles;
+            const auto saved = input_profiles.PeekProfile(p.profile_name, i);
+            bool same = saved.has_value();
+            for (size_t k = 0; same && k < p.buttons.size(); ++k) {
+                same = BindingMapping(p.buttons[k]) == BindingMapping(saved->buttons[k]);
+            }
+            for (size_t k = 0; same && k < p.analogs.size(); ++k) {
+                same = BindingMapping(p.analogs[k]) == BindingMapping(saved->analogs[k]);
+            }
+            if (!same) {
+                LOG_INFO(Frontend, "console-mode: P{} remapped: profile \"{}\" let go", i + 1,
+                         p.profile_name);
+                p.profile_name.clear();
+                SetSeatProfile(static_cast<int>(i), {});
+            }
         }
         if (!edited) {
             continue;
         }
-        LOG_INFO(Frontend, "console-mode: Controls edit on P{} kept in profile P{}", i + 1,
-                 target + 1);
+        LOG_INFO(Frontend, "console-mode: Controls edit on P{} kept for the session in set P{}",
+                 i + 1, target + 1);
     }
 
     if (!handheld_has_player) {
-        auto& motions = (*console_profile)[0].motions;
+        auto& motions = SessionSet(0).motions;
         for (size_t k = 0; k < motions.size(); ++k) {
             const std::string& kept = handheld_motions_kept[k];
             if (motions[k].empty() && !kept.empty() &&
@@ -2916,6 +2987,8 @@ void MainWindow::ApplyConsoleControllerMode() {
         // engine changes from here on stays runtime only (see SaveAllConfigValues)
         console_profile = Settings::values.players.GetValue(true);
         game_profiles.reset();
+        session_sets = *console_profile;
+        ApplySeatProfiles();
         LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside "
                            "(PROBE P1 motions {})",
                  MotionTrace((*console_profile)[0]));
@@ -3492,7 +3565,7 @@ void MainWindow::ApplyConsoleControllerMode() {
             }
             const int set = slot_set[player];
             const bool game_set = game_profiles && !(*game_profiles)[set].profile_name.empty();
-            auto& target = game_set ? (*game_profiles)[set] : (*console_profile)[set];
+            auto& target = SessionSet(set);
             if (name.empty() && restore) {
                 if (const auto before = set_before_profile.find(set);
                     before != set_before_profile.end()) {
@@ -3515,6 +3588,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 ApplyProfileMappings(target, *read);
             }
             target.profile_name = name;
+            // The seat remembers it: the next session's P{player} starts with it
+            SetSeatProfile(player, name);
             LOG_INFO(Frontend, "console-mode: P{} input profile \"{}\" on the P{} set{}",
                      player + 1, name, set + 1, game_set ? " (the game's)" : "");
             changed = true;

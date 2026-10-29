@@ -1318,7 +1318,9 @@ void ConfigureInputPlayer::UpdateProfileCard() {
     card_delete->setEnabled(selected);
     if (ui->comboProfiles->currentIndex() < 0) {
         card_save->setToolTip(tr("Keep this mapping as a new profile (asks for its name)"));
-        card_status->setText(tr("No profile selected. %1").arg(follows));
+        // In Modern Console a remap lasts the session; a profile is what keeps controls
+        card_status->setText(tr("No profile: this player uses its usual controls. Changes made "
+                                "here last for this session; Save as New keeps them."));
         card_status->setPalette(palette());
         return;
     }

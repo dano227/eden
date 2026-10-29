@@ -586,6 +586,15 @@ private:
     /// player -> the set its controller carries, as of the last tick (the player's own when
     /// it has no controller)
     std::array<int, 10> slot_set{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    /// This session's binding sets, from the user's own (console_profile) with each seat's
+    /// profile on top: everything Modern Console changes (profiles, remaps) stays here, so
+    /// the user's own setup, which the manual modes use, is never touched
+    std::optional<std::array<Settings::PlayerInput, 10>> session_sets;
+    /// The set a change goes to: the session's, or a game's own profile set
+    Settings::PlayerInput& SessionSet(int set);
+    /// The profile each seat (player number) starts a session with
+    void ApplySeatProfiles();
+    void SetSeatProfile(int player, const std::string& name);
     /// A set's mappings before this session's first profile on it, for taking the profile off
     std::map<int, Settings::PlayerInput> set_before_profile;
     /// The handheld's own pad (connection instance): never a player while other pads are
