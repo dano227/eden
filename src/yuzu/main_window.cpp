@@ -2092,6 +2092,45 @@ bool CouldBeHandheld(Uint16 vendor, Uint16 product) {
     return !IsControllerMaker(vendor);
 }
 
+/// Whether a pad is plainly a standalone controller, never a handheld's built-in controls:
+/// not offered as the handheld's controller. Valve's other controllers, the makers that only
+/// make controllers, and Xbox controllers on Bluetooth or a wireless adapter (their ids differ
+/// from the wired ones); a wired Microsoft id stays, as some handhelds' controls report one
+/// (an Xbox 360 pad, the ROG Xbox Ally). Wireless pads are never built in either.
+bool IsPlainlyStandalone(SDL_JoystickID id) {
+    const Uint16 vendor = PadVendor(id);
+    const Uint16 product = PadProduct(id);
+    if (vendor == 0x28DE) {
+        return product != 0x1205;
+    }
+    if (vendor == 0x045E) {
+        switch (product) {
+        case 0x02E0: // Xbox One S, Bluetooth
+        case 0x02E6: // Xbox Wireless Adapter
+        case 0x02FD: // Xbox One S, Bluetooth
+        case 0x0719: // Xbox 360 wireless receiver
+        case 0x0B05: // Xbox Elite Series 2, Bluetooth
+        case 0x0B13: // Xbox Series X|S, Bluetooth
+        case 0x0B20: // Xbox Series X|S, Bluetooth
+        case 0x0B22: // Xbox Elite Series 2, Bluetooth
+            return true;
+        default:
+            break;
+        }
+    } else if (IsControllerMaker(vendor)) {
+        return true;
+    }
+    const JoystickApiLock lock;
+    SDL_Gamepad* pad = SDL_OpenGamepad(id);
+    if (!pad) {
+        return false;
+    }
+    const bool wireless = SDL_GetJoystickConnectionState(SDL_GetGamepadJoystick(pad)) ==
+                          SDL_JOYSTICK_CONNECTION_WIRELESS;
+    SDL_CloseGamepad(pad);
+    return wireless;
+}
+
 /// True for the controller types Steam reports for standalone controllers
 bool IsStandaloneControllerType(SDL_GamepadType type) {
     return type != SDL_GAMEPAD_TYPE_UNKNOWN && type != SDL_GAMEPAD_TYPE_STANDARD;
@@ -3324,6 +3363,10 @@ void MainWindow::ApplyConsoleControllerMode() {
         std::scoped_lock lock{state.mutex};
         state.pads.clear();
         for (const auto& [id, ident] : live) {
+            // Only pads that could be built in are offered as the handheld's controller
+            if (IsPlainlyStandalone(id)) {
+                continue;
+            }
             // Under Steam every pad shares one GUID identity, so the picker would declare
             // them all at once: its entries carry the Steam handle there instead
             const Uint64 handle = LaunchedThroughSteam() ? PadSteamHandle(id) : 0;
@@ -3339,7 +3382,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 state.identify_armed = false;
             } else {
                 for (const auto& [id, ident] : live) {
-                    if (PadAnyButtonPressed(id)) {
+                    // (A press on a plainly standalone controller is not the handheld's)
+                    if (PadAnyButtonPressed(id) && !IsPlainlyStandalone(id)) {
                         state.identify_armed = false;
                         builtin_pad_id = id;
                         builtin_identity = ident;
