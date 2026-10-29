@@ -860,6 +860,8 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             profile->setCurrentIndex(
                 static_cast<int>(profiles.indexOf(QString::fromStdString(entry.profile)) + 1));
             profile->setToolTip(tr("Mapping profile for P%1's controller").arg(player + 1));
+            // One width for every row, whatever the profile's name
+            profile->setFixedWidth(150);
             profile->setEnabled(live && (!profiles.isEmpty() || !entry.profile.empty()));
             connect(profile, qOverload<int>(&QComboBox::activated), this,
                     [player, profile](int index) {
@@ -879,6 +881,10 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             remove->setAutoRaise(true);
             remove->setToolTip(tr("Remove the profile from P%1").arg(player + 1));
             remove->setFixedWidth(remove->sizeHint().height());
+            // Hidden without a profile, but its room kept: the rows' buttons stay in line
+            QSizePolicy keep = remove->sizePolicy();
+            keep.setRetainSizeWhenHidden(true);
+            remove->setSizePolicy(keep);
             remove->setVisible(!entry.profile.empty());
             remove->setEnabled(live);
             connect(remove, &QToolButton::clicked, this, [player] {
