@@ -488,16 +488,19 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     indent->addWidget(handheld_panel);
     mode_layout->addLayout(indent);
 
-    // Under Steam: read the controllers directly instead of through Steam Input
-    steam_panel = new QFrame(mode_box);
-    steam_panel->setObjectName(QStringLiteral("steamPanel"));
-    steam_panel->setStyleSheet(
-        Themed(QStringLiteral("#steamPanel { border: 1px solid palette(mid); "
-                              "border-radius: 8px; background: palette(base); }")));
-    auto* steam_layout = new QHBoxLayout(steam_panel);
-    steam_layout->setContentsMargins(12, 8, 12, 8);
+    mode_info = new QLabel(mode_box);
+    mode_info->setWordWrap(true);
+    mode_layout->addWidget(mode_info);
+    layout->addWidget(mode_box);
+
+    // Under Steam, for both Modern Console modes: read the controllers directly instead of
+    // through Steam Input
+    auto* steam_box = new QGroupBox(tr("Steam Input"), this);
+    steam_panel = steam_box;
+    auto* steam_layout = new QHBoxLayout(steam_box);
     auto* steam_text = new QVBoxLayout();
-    auto* steam_title = new QLabel(tr("Bypass Steam Input"), steam_panel);
+    steam_text->setSpacing(1);
+    auto* steam_title = new QLabel(tr("Bypass Steam Input"), steam_box);
     steam_title->setFont(title_font);
     auto* steam_note = new QLabel(
         tr("Eden reads your controllers directly instead of through Steam's virtual "
@@ -505,15 +508,15 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
            "doesn't work under Steam, such as the Steam Controller or a newer controller. Takes "
            "effect after restarting Eden; connected controllers may be assigned to different "
            "players."),
-        steam_panel);
+        steam_box);
     steam_note->setWordWrap(true);
     steam_note->setObjectName(QStringLiteral("note"));
-    steam_restart = new QLabel(tr("Restart Eden to apply this change."), steam_panel);
+    steam_restart = new QLabel(tr("Restart Eden to apply this change."), steam_box);
     steam_text->addWidget(steam_title);
     steam_text->addWidget(steam_note);
     steam_text->addWidget(steam_restart);
     steam_layout->addLayout(steam_text, 1);
-    steam_switch = new ToggleSwitch(steam_panel);
+    steam_switch = new ToggleSwitch(steam_box);
     steam_switch->setToolTip(tr("On: Eden reads the controllers directly"));
     steam_layout->addWidget(steam_switch, 0, Qt::AlignVCenter);
     original_bypass = Settings::values.console_bypass_steam.GetValue();
@@ -522,14 +525,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
         Settings::values.console_bypass_steam.SetValue(on);
         UpdateModeUi();
     });
-    auto* steam_indent = new QHBoxLayout();
-    steam_indent->setContentsMargins(16, 0, 0, 0);
-    steam_indent->addWidget(steam_panel);
-    mode_layout->addLayout(steam_indent);
-    mode_info = new QLabel(mode_box);
-    mode_info->setWordWrap(true);
-    mode_layout->addWidget(mode_info);
-    layout->addWidget(mode_box);
+    layout->addWidget(steam_box);
 
     // Assign Handheld Controller: declare the handheld's own controller instead of guessing it.
     // Shown for that mode only.
