@@ -1155,13 +1155,16 @@ QBoxLayout* LayoutHolding(QLayout* layout, QWidget* widget) {
 void ConfigureInputPlayer::BuildProfileCard() {
     profile_card = new QGroupBox(tr("Mapping Profile"), this);
     auto* column = new QVBoxLayout(profile_card);
+    // Connect Controller's margins, so the two drop-downs are level
+    if (const QLayout* connect = ui->groupConnectedController->layout()) {
+        column->setContentsMargins(connect->contentsMargins());
+    }
     auto* row = new QHBoxLayout;
     card_profiles = new QComboBox(profile_card);
     card_profiles->setPlaceholderText(tr("No profile"));
     ConfigurePlayerAssignment::ModernizeCombos(profile_card);
-    // As wide as a profile name needs: the rest of the row is the profile's buttons and status
+    // Fills the row up to its buttons, which end at the card's edge
     card_profiles->setMinimumWidth(160);
-    card_profiles->setMaximumWidth(260);
     card_profiles->setToolTip(tr("Picking a profile applies it to this player at once."));
     card_save = new QPushButton(tr("Save"), profile_card);
     card_save->setDefault(false);
@@ -1183,14 +1186,13 @@ void ConfigureInputPlayer::BuildProfileCard() {
     card_remove->setText(QStringLiteral("\u2715"));
     card_remove->setToolTip(tr("Remove the profile from this player"));
     card_remove->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
-    row->addWidget(card_profiles);
+    row->addWidget(card_profiles, 1);
     row->addWidget(card_remove);
     row->addWidget(card_save);
     row->addWidget(card_save_new);
     row->addWidget(card_rename);
     row->addWidget(card_duplicate);
     row->addWidget(card_delete);
-    row->addStretch(1);
     column->addLayout(row);
     card_status = new QLabel(profile_card);
     card_status->setWordWrap(true);

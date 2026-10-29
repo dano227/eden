@@ -27,6 +27,7 @@
 #include <QCheckBox>
 #include <QDir>
 #include <QRadioButton>
+#include <QAbstractItemView>
 #include <QScrollArea>
 #include <QStyledItemDelegate>
 #include <QTimer>
@@ -256,6 +257,12 @@ void ConfigurePlayerAssignment::ModernizeCombos(QWidget* root) {
     for (auto* combo : root->findChildren<QComboBox*>()) {
         if (!combo->property("modern_list").toBool()) {
             combo->setItemDelegate(new QStyledItemDelegate(combo));
+            // The list sits in a frame of its own window, whose padding showed white under a
+            // dark theme: it takes the list's solid background
+            if (QWidget* frame = combo->view()->window(); frame && frame != combo->window()) {
+                frame->setStyleSheet(Themed(QStringLiteral(
+                    "QFrame { background: popup-base; border: 1px solid palette(mid); }")));
+            }
             combo->setProperty("modern_list", true);
         }
     }
