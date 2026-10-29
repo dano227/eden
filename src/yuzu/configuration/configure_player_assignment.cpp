@@ -21,6 +21,9 @@
 #include <QPainter>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QIcon>
+#include <QPixmap>
+#include <QResizeEvent>
 #include <QLabel>
 #include <QPushButton>
 #include <QButtonGroup>
@@ -93,6 +96,53 @@ protected:
     }
 };
 constexpr char PlayerMime[] = "application/x-eden-player";
+
+/// A drop-down with a ✕ inside it, left of its arrow, that clears it
+class ClearableCombo : public QComboBox {
+public:
+    explicit ClearableCombo(QWidget* parent) : QComboBox(parent) {
+        clear_button = new QToolButton(this);
+        clear_button->setText(QStringLiteral("\u2715"));
+        clear_button->setCursor(Qt::ArrowCursor);
+        clear_button->setFixedSize(18, 18);
+        clear_button->setStyleSheet(ConfigurePlayerAssignment::Themed(QStringLiteral(
+            "QToolButton { border: none; border-radius: 9px; background: transparent; "
+            "color: muted-text; padding: 0px; }"
+            "QToolButton:hover { background: palette(highlight); "
+            "color: palette(highlighted-text); }")));
+        // (Room for it between the text and the arrow)
+        setStyleSheet(QStringLiteral("QComboBox { padding-right: 40px; }"));
+    }
+
+    QToolButton* clear_button;
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QComboBox::resizeEvent(event);
+        clear_button->move(width() - 22 - clear_button->width(),
+                           (height() - clear_button->height()) / 2);
+    }
+};
+
+/// The red button that removes a player: a cross, or a power symbol when it turns the
+/// controller off
+QIcon RemoveIcon(bool power) {
+    QPixmap pixmap(QSize(14, 14) * 2);
+    pixmap.setDevicePixelRatio(2);
+    pixmap.fill(Qt::transparent);
+    QPainter painter{&pixmap};
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap));
+    if (power) {
+        painter.drawArc(QRectF(2, 2.5, 10, 10), 125 * 16, 290 * 16);
+        painter.drawLine(QPointF(7, 1), QPointF(7, 7));
+    } else {
+        painter.drawLine(QPointF(3, 3), QPointF(11, 11));
+        painter.drawLine(QPointF(11, 3), QPointF(3, 11));
+    }
+    painter.end();
+    return QIcon{pixmap};
+}
 
 /// One player in the list: a click rumbles its controller, and a long press (or a drag) picks
 /// it up to drop on another player, which swaps the two
@@ -858,7 +908,8 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         signature += QString::number(entry.player) + QLatin1Char(':') +
                      QString::fromStdString(entry.name) + QLatin1Char('/') +
                      QString::fromStdString(entry.profile) +
-                     (entry.leaving ? QStringLiteral("x") : QString{}) + QLatin1Char('|');
+                     (entry.leaving ? QStringLiteral("x") : QString{}) +
+                     (entry.bluetooth ? QStringLiteral("b") : QString{}) + QLatin1Char('|');
     }
     if (!handheld_has_player) {
         signature += QStringLiteral("h:") + QString::fromStdString(handheld_name);
@@ -897,6 +948,41 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             line->addWidget(badge);
             line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
             const bool live = !entry.leaving;
+
+            // The profile the player's controller carries; picking one puts it on it, and
+            // "No profile" (or the ✕ inside) takes it off: the mappings from before come back
+            auto* profile = new ClearableCombo(row);
+            profile->addItem(tr("No profile"));
+            profile->addItems(profiles);
+            // (Not found is -1: "No profile")
+            profile->setCurrentIndex(
+                static_cast<int>(profiles.indexOf(QString::fromStdString(entry.profile)) + 1));
+            profile->setToolTip(tr("Mapping profile for P%1's controller").arg(player + 1));
+            // One width for every row, whatever the profile's name
+            profile->setFixedWidth(170);
+            profile->setEnabled(live && (!profiles.isEmpty() || !entry.profile.empty()));
+            const auto take_off = [player] {
+                auto& console = Common::GetControllerConsoleState();
+                std::scoped_lock lock{console.mutex};
+                console.profile_requests.push_back({player, {}, true});
+            };
+            connect(profile, qOverload<int>(&QComboBox::activated), this,
+                    [player, profile, take_off](int index) {
+                        if (index == 0) {
+                            take_off();
+                            return;
+                        }
+                        auto& console = Common::GetControllerConsoleState();
+                        std::scoped_lock lock{console.mutex};
+                        console.profile_requests.push_back(
+                            {player, profile->itemText(index).toStdString()});
+                    });
+            profile->clear_button->setToolTip(tr("Take the profile off P%1").arg(player + 1));
+            // (A profile renamed or deleted elsewhere shows as none: no ✕ for it)
+            profile->clear_button->setVisible(
+                live && profiles.contains(QString::fromStdString(entry.profile)));
+            connect(profile->clear_button, &QToolButton::clicked, this, take_off);
+            line->addWidget(profile);
 
             auto* up = new QToolButton(row);
             up->setArrowType(Qt::UpArrow);
@@ -950,50 +1036,36 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             });
             line->addWidget(settings);
 
-            // The profile the player's controller carries; picking one puts it on it, and
-            // "No profile" takes it off (the controller's mappings from before come back)
-            auto* profile = new QComboBox(row);
-            profile->addItem(tr("No profile"));
-            profile->addItems(profiles);
-            // (Not found is -1: "No profile")
-            profile->setCurrentIndex(
-                static_cast<int>(profiles.indexOf(QString::fromStdString(entry.profile)) + 1));
-            profile->setToolTip(tr("Mapping profile for P%1's controller").arg(player + 1));
-            // One width for every row, whatever the profile's name
-            profile->setFixedWidth(150);
-            profile->setEnabled(live && (!profiles.isEmpty() || !entry.profile.empty()));
-            connect(profile, qOverload<int>(&QComboBox::activated), this,
-                    [player, profile](int index) {
-                        auto& console = Common::GetControllerConsoleState();
-                        std::scoped_lock lock{console.mutex};
-                        if (index == 0) {
-                            console.profile_requests.push_back({player, {}, true});
-                        } else {
-                            console.profile_requests.push_back(
-                                {player, profile->itemText(index).toStdString()});
-                        }
-                    });
-            line->addWidget(profile);
-            // The quick way to take the profile off (as "No profile")
+            // Removing the player: red, apart from the rest. The controller sits out until it
+            // reconnects; a Bluetooth one is turned off, and turning it on joins it again.
+            line->addSpacing(6);
             auto* remove = new QToolButton(row);
-            remove->setText(QStringLiteral("\u2715"));
-            remove->setAutoRaise(true);
-            remove->setToolTip(tr("Remove the profile from P%1").arg(player + 1));
-            remove->setFixedWidth(remove->sizeHint().height());
-            // Hidden without a profile, but its room kept: the rows' buttons stay in line
-            QSizePolicy keep = remove->sizePolicy();
-            keep.setRetainSizeWhenHidden(true);
-            remove->setSizePolicy(keep);
-            // (A profile renamed or deleted elsewhere shows as none: no ✕ for it)
-            remove->setVisible(profiles.contains(QString::fromStdString(entry.profile)));
+            remove->setText(entry.bluetooth ? tr("Turn Off") : tr("Remove"));
+            remove->setIcon(RemoveIcon(entry.bluetooth));
+            remove->setIconSize(QSize(14, 14));
+            remove->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            remove->setCursor(Qt::PointingHandCursor);
+            remove->setStyleSheet(Themed(QStringLiteral(
+                "QToolButton { border: 1px solid #c83c3c; border-radius: 6px; "
+                "padding: 3px 10px; background: #c83c3c; color: white; font-weight: bold; }"
+                "QToolButton:hover { background: #a82c2c; border-color: #a82c2c; }"
+                "QToolButton:disabled { background: transparent; border-color: palette(mid); "
+                "color: palette(mid); }")));
+            remove->setToolTip(
+                entry.bluetooth
+                    ? tr("Turns off P%1's controller and frees the player. Turn the controller "
+                         "on to join again.")
+                          .arg(player + 1)
+                    : tr("Frees P%1 for the next controller that connects. This controller "
+                         "sits out until it is turned off and on again.")
+                          .arg(player + 1));
             remove->setEnabled(live);
             connect(remove, &QToolButton::clicked, this, [player] {
                 auto& console = Common::GetControllerConsoleState();
                 std::scoped_lock lock{console.mutex};
-                console.profile_requests.push_back({player, {}, true});
+                console.remove_requests.push_back(player);
             });
             line->addWidget(remove);
-
 
             players_list->addWidget(row);
             player_rows.push_back(row);

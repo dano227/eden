@@ -83,6 +83,13 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
+#ifdef __linux__
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#endif
 #include <QGuiApplication>
 #include <QInputDialog>
 #include <QMimeData>
@@ -1966,6 +1973,113 @@ QString PadPath(SDL_JoystickID id) {
     return out;
 }
 
+#ifdef __linux__
+/// The kernel's HID entry for a controller (bus, vendor, product, address), from its uevent
+struct HidEntry {
+    unsigned bus = 0;
+    unsigned vendor = 0;
+    unsigned product = 0;
+    std::string address;
+};
+
+std::optional<HidEntry> ReadHidEntry(const QString& dir) {
+    QFile file{dir + QStringLiteral("/uevent")};
+    if (dir.isEmpty() || !file.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    HidEntry entry;
+    bool has_id = false;
+    for (const QByteArray& line : file.readAll().split('\n')) {
+        if (line.startsWith("HID_ID=")) {
+            const QList<QByteArray> parts = line.mid(7).split(':');
+            if (parts.size() == 3) {
+                entry.bus = parts[0].toUInt(nullptr, 16);
+                entry.vendor = parts[1].toUInt(nullptr, 16);
+                entry.product = parts[2].toUInt(nullptr, 16);
+                has_id = true;
+            }
+        } else if (line.startsWith("HID_UNIQ=")) {
+            entry.address = line.mid(9).trimmed().toLower().toStdString();
+        }
+    }
+    return has_id ? std::optional{entry} : std::nullopt;
+}
+
+/// The Bluetooth address of a pad's controller, or "" when it is not on Bluetooth or can't be
+/// told apart: the HID device behind the pad's node, else (under Steam, whose virtual pads hide
+/// the real one) the controller of the pad's model when it is the only one, on any bus (a wired
+/// DualSense and a Bluetooth one share a model: never the wrong one off)
+std::string PadBluetoothAddress(SDL_JoystickID id) {
+    constexpr unsigned bus_bluetooth = 0x5;
+    const auto valid = [](const HidEntry& entry) {
+        return entry.bus == bus_bluetooth && entry.address.size() == 17;
+    };
+    const QString node = QFileInfo{PadPath(id)}.fileName();
+    if (!node.isEmpty()) {
+        const QString dir =
+            node.startsWith(QStringLiteral("hidraw"))
+                ? QFileInfo{QStringLiteral("/sys/class/hidraw/%1/device").arg(node)}
+                      .canonicalFilePath()
+                : QFileInfo{QStringLiteral("/sys/class/input/%1/device/device").arg(node)}
+                      .canonicalFilePath();
+        if (const auto entry = ReadHidEntry(dir)) {
+            return valid(*entry) ? entry->address : std::string{};
+        }
+    }
+    const unsigned vendor = SDL_GetJoystickVendorForID(id);
+    const unsigned product = SDL_GetJoystickProductForID(id);
+    // One controller can have several HID entries: they share its address
+    std::map<std::string, bool> controllers;
+    const QDir devices{QStringLiteral("/sys/bus/hid/devices")};
+    for (const QString& name : devices.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const auto entry = ReadHidEntry(devices.filePath(name));
+        if (entry && entry->vendor == vendor && entry->product == product) {
+            controllers[entry->address.empty() ? name.toStdString() : entry->address] =
+                valid(*entry);
+        }
+    }
+    if (controllers.size() == 1 && controllers.begin()->second) {
+        return controllers.begin()->first;
+    }
+    return {};
+}
+
+/// Asks BlueZ to disconnect a controller, which turns most controllers off
+void DisconnectBluetooth(const std::string& address) {
+    QDBusConnection bus = QDBusConnection::systemBus();
+    if (!bus.isConnected()) {
+        LOG_WARNING(Frontend, "console-mode: no system bus to disconnect {}", address);
+        return;
+    }
+    QString device = QString::fromStdString(address).toUpper();
+    device.replace(QLatin1Char(':'), QLatin1Char('_'));
+    const QDir adapters{QStringLiteral("/sys/class/bluetooth")};
+    for (const QString& adapter : adapters.entryList({QStringLiteral("hci*")}, QDir::AllEntries)) {
+        if (adapter.contains(QLatin1Char(':'))) {
+            continue; // a connection's entry (hci0:12), not an adapter
+        }
+        const QString path = QStringLiteral("/org/bluez/%1/dev_%2").arg(adapter, device);
+        const QDBusMessage call = QDBusMessage::createMethodCall(
+            QStringLiteral("org.bluez"), path, QStringLiteral("org.bluez.Device1"),
+            QStringLiteral("Disconnect"));
+        auto* watcher = new QDBusPendingCallWatcher(bus.asyncCall(call));
+        QObject::connect(watcher, &QDBusPendingCallWatcher::finished, [address, path](auto* w) {
+            const QDBusPendingReply<> reply = *w;
+            if (reply.isError()) {
+                if (reply.error().type() != QDBusError::UnknownObject) {
+                    LOG_WARNING(Frontend, "console-mode: disconnect {} failed: {}", address,
+                                reply.error().message().toStdString());
+                }
+            } else {
+                LOG_INFO(Frontend, "console-mode: disconnected {} ({})", address,
+                         path.toStdString());
+            }
+            w->deleteLater();
+        });
+    }
+}
+#endif
+
 /// True while any button of a pad is held: the Identify handshake reads this.
 bool PadAnyButtonPressed(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -2707,7 +2821,10 @@ void MainWindow::RenderControllerOverlay() {
             controller_hints.push_back({overlay_row_name[i], i, true, row.flash_since});
         } else if (row.flash == 2 && row.flash_since > hinted_leave[i]) {
             hinted_leave[i] = row.flash_since;
-            controller_hints.push_back({overlay_row_name[i], i, false, row.flash_since});
+            // (Removed on the tick it left)
+            const bool removed = std::abs(row.flash_since - removed_at[i]) < 1000;
+            controller_hints.push_back({overlay_row_name[i], i, false, row.flash_since,
+                                        removed ? (removed_off[i] ? 2 : 1) : 0});
         }
     }
     std::erase_if(controller_hints,
@@ -2723,7 +2840,14 @@ void MainWindow::RenderControllerOverlay() {
         constexpr int hint_gap = 6;
         constexpr int badge_w = 36;
         const auto text_of = [](const ControllerHint& hint) {
-            return hint.joined ? tr("%1 joined").arg(hint.name) : tr("%1 left").arg(hint.name);
+            if (hint.joined) {
+                return tr("%1 joined").arg(hint.name);
+            }
+            if (hint.removed == 2) {
+                return tr("%1 turned off").arg(hint.name);
+            }
+            return hint.removed == 1 ? tr("%1 removed").arg(hint.name)
+                                     : tr("%1 left").arg(hint.name);
         };
         int width = 0;
         for (const auto& hint : controller_hints) {
@@ -2913,6 +3037,81 @@ void MainWindow::RenderControllerOverlay() {
                          Qt::AlignVCenter | Qt::AlignLeft, overlay_row_name[row.player]);
         painter.setPen(Qt::NoPen);
     };
+    // The row under the mouse shows its buttons where its history goes: swaps with the players
+    // above and below, and remove (turn off, for a Bluetooth controller)
+    overlay_buttons.clear();
+    const auto neighbour = [this](std::size_t r, int step) {
+        for (int k = static_cast<int>(r) + step;
+             k >= 0 && k < static_cast<int>(overlay_rows.size()); k += step) {
+            if (overlay_rows[static_cast<std::size_t>(k)].pad != 0) {
+                return overlay_rows[static_cast<std::size_t>(k)].player;
+            }
+        }
+        return -1;
+    };
+    const auto row_buttons = [&](std::size_t r, int at_y) {
+        const auto& row = overlay_rows[r];
+        const auto address = pad_bluetooth.find(row.pad);
+        const bool turns_off = address != pad_bluetooth.end() && !address->second.empty();
+        const QString label = turns_off ? tr("Turn Off") : tr("Remove");
+        constexpr int round_w = 24;
+        const int remove_w = 22 + chip_fm.horizontalAdvance(label) + 10;
+        const int above = neighbour(r, -1);
+        const int below = neighbour(r, 1);
+        const int count_round = (above >= 0 ? 1 : 0) + (below >= 0 ? 1 : 0);
+        const double x0 = 1 + controller_w + bubble_gap;
+        const double pill_w = 4 + count_round * (round_w + chip_gap) + remove_w + 4;
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(14, 14, 18, 200));
+        painter.drawRoundedRect(QRectF(x0, at_y, pill_w, row_h), row_h / 2.0, row_h / 2.0);
+        double x = x0 + 4;
+        const double top = at_y + 3;
+        const double h = row_h - 6;
+        const auto add = [&](double w, int action, int target) {
+            const QRectF rect(x, top, w, h);
+            overlay_buttons.push_back({rect.toAlignedRect(), row.player, action, target});
+            x += w + chip_gap;
+            return rect;
+        };
+        const auto arrow = [&](int step, int target) {
+            const QRectF rect = add(round_w, step, target);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(255, 255, 255, 40));
+            painter.drawEllipse(rect.center(), h / 2.0, h / 2.0);
+            const QPointF c = rect.center();
+            const double d = step < 0 ? -1.0 : 1.0;
+            const QPointF tri[3] = {QPointF(c.x() - 5, c.y() - 2.5 * d),
+                                    QPointF(c.x() + 5, c.y() - 2.5 * d),
+                                    QPointF(c.x(), c.y() + 3.5 * d)};
+            painter.setBrush(Qt::white);
+            painter.drawPolygon(tri, 3);
+        };
+        if (above >= 0) {
+            arrow(-1, above);
+        }
+        if (below >= 0) {
+            arrow(1, below);
+        }
+        const QRectF rect = add(remove_w, 0, -1);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(200, 50, 50, 230));
+        painter.drawRoundedRect(rect, h / 2.0, h / 2.0);
+        // Its icon: a power symbol, or a cross
+        const QPointF c(rect.left() + 12, rect.center().y());
+        painter.setPen(QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap));
+        painter.setBrush(Qt::NoBrush);
+        if (turns_off) {
+            painter.drawArc(QRectF(c.x() - 5, c.y() - 4.5, 10, 10), 125 * 16, 290 * 16);
+            painter.drawLine(QPointF(c.x(), c.y() - 6), QPointF(c.x(), c.y()));
+        } else {
+            painter.drawLine(QPointF(c.x() - 4, c.y() - 4), QPointF(c.x() + 4, c.y() + 4));
+            painter.drawLine(QPointF(c.x() + 4, c.y() - 4), QPointF(c.x() - 4, c.y() + 4));
+        }
+        painter.setFont(chip_font);
+        painter.setPen(Qt::white);
+        painter.drawText(rect.adjusted(22, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, label);
+        painter.setPen(Qt::NoPen);
+    };
     // Where each row is, for the mouse (a row drags onto another to swap them)
     overlay_hits.clear();
     int drag_row = -1;
@@ -2935,6 +3134,11 @@ void MainWindow::RenderControllerOverlay() {
             drag_y = y;
         } else {
             controller_bubble(row, blink, y);
+        }
+        if (row.player == overlay_hover_player && row.pad != 0 && !overlay_dragging) {
+            row_buttons(r, y);
+            y += row_h + row_gap;
+            continue;
         }
 
         // The history bubble: the last presses, newest first and brightest, each shrinking
@@ -2989,6 +3193,11 @@ void MainWindow::RenderControllerOverlay() {
 
 bool MainWindow::HandleOverlayMouse(QEvent* event) {
     const auto type = event->type();
+    if (type == QEvent::Leave && overlay_hover_player >= 0) {
+        overlay_hover_player = -1;
+        RenderControllerOverlay();
+        return false;
+    }
     if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove &&
         type != QEvent::MouseButtonRelease) {
         return false;
@@ -3002,6 +3211,7 @@ bool MainWindow::HandleOverlayMouse(QEvent* event) {
     if (!shown || overlay_hits.empty() || !render_window) {
         overlay_drag_player = -1;
         overlay_dragging = false;
+        overlay_hover_player = -1;
         return false;
     }
     // The cursor in the overlay image: the overlay is drawn at its own size, 4 pixels in from
@@ -3020,6 +3230,44 @@ bool MainWindow::HandleOverlayMouse(QEvent* event) {
         return -1;
     };
     const auto* mouse = static_cast<QMouseEvent*>(event);
+    // The row under the mouse shows its buttons (not while one is dragged)
+    if (type == QEvent::MouseMove && !overlay_dragging) {
+        int hover = row_at(at);
+        if (hover >= 0 && std::none_of(overlay_rows.begin(), overlay_rows.end(), [&](const auto& row) {
+                return row.player == hover && row.pad != 0;
+            })) {
+            hover = -1;
+        }
+        if (hover != overlay_hover_player) {
+            overlay_hover_player = hover;
+            RenderControllerOverlay();
+        }
+    }
+    // A button acts on its press; its release is the overlay's too
+    if (overlay_button_down && type == QEvent::MouseButtonRelease) {
+        overlay_button_down = false;
+        return true;
+    }
+    if (type == QEvent::MouseButtonPress && mouse->button() == Qt::LeftButton) {
+        const auto button = std::find_if(overlay_buttons.begin(), overlay_buttons.end(),
+                                         [&](const auto& b) { return b.rect.contains(at); });
+        if (button != overlay_buttons.end()) {
+            overlay_button_down = true;
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            if (button->action == 0) {
+                LOG_INFO(Frontend, "console-mode: overlay remove P{}", button->player + 1);
+                state.remove_requests.push_back(button->player);
+            } else {
+                LOG_INFO(Frontend, "console-mode: overlay swap P{} <-> P{}", button->player + 1,
+                         button->target + 1);
+                state.swap_requests.emplace_back(button->player, button->target);
+                // The buttons follow the controller to its new row
+                overlay_hover_player = button->target;
+            }
+            return true;
+        }
+    }
     if (type == QEvent::MouseButtonPress) {
         if (mouse->button() != Qt::LeftButton) {
             return false;
@@ -3354,6 +3602,9 @@ void MainWindow::ApplyConsoleControllerMode() {
                 if (builtin_pad_id == from) {
                     new_builtin = to;
                 }
+                if (benched_pads.erase(from)) {
+                    benched_pads.insert(to);
+                }
             }
             builtin_pad_id = new_builtin;
         }
@@ -3459,7 +3710,9 @@ void MainWindow::ApplyConsoleControllerMode() {
             state.handheld_name.clear();
             state.handheld_has_player = false;
             state.swap_requests.clear();
+            state.remove_requests.clear();
         }
+        benched_pads.clear();
         if (console_profile) {
             // Leaving the console modes: the user's own players come back exactly as they were
             RestoreConsoleProfile();
@@ -3590,6 +3843,50 @@ void MainWindow::ApplyConsoleControllerMode() {
                 ++it;
             }
         }
+    }
+
+    // Players removed with their ✕: the controller sits out (as if it were gone) until it
+    // reconnects, and the player is free for the next controller to connect. A Bluetooth
+    // controller is disconnected, which turns most of them off: turned on, it joins again.
+    {
+        std::erase_if(pad_bluetooth, [&](const auto& e) { return !live.contains(e.first); });
+#ifdef __linux__
+        for (const auto& [id, ident] : live) {
+            if (!pad_bluetooth.contains(id)) {
+                pad_bluetooth[id] = PadBluetoothAddress(id);
+            }
+        }
+#endif
+        std::vector<int> removals;
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            removals.swap(state.remove_requests);
+        }
+        for (const int player : removals) {
+            const auto held = std::find_if(pad_slots.begin(), pad_slots.end(), [&](const auto& e) {
+                return e.second == player && live.contains(e.first);
+            });
+            if (player < 0 || player >= 10 || held == pad_slots.end()) {
+                continue;
+            }
+            const u32 id = held->first;
+            pad_slots.erase(held);
+            pad_identity.erase(id);
+            benched_pads.insert(id);
+            removed_at[player] = QDateTime::currentMSecsSinceEpoch();
+            const std::string address = pad_bluetooth[id];
+            removed_off[player] = !address.empty();
+#ifdef __linux__
+            if (!address.empty()) {
+                DisconnectBluetooth(address);
+            }
+#endif
+            LOG_INFO(Frontend, "console-mode: P{} removed, inst={} sits out{}", player + 1, id,
+                     address.empty() ? std::string{} : fmt::format(", turning off {}", address));
+        }
+        std::erase_if(benched_pads, [&](u32 id) { return !live.contains(id); });
+        std::erase_if(live, [&](const auto& e) { return benched_pads.contains(e.first); });
     }
 
     // The built-in's rules apply to exactly one pad: the one we can PROVE is the
@@ -4453,8 +4750,10 @@ void MainWindow::ApplyConsoleControllerMode() {
             overlay_rows.push_back({i, QStringLiteral("P%1: %2").arg(i + 1).arg(
                                            overlay_row_name[i]),
                                     gone != 0 ? 0u : pad, flash, flash_since});
+            const auto address = pad_bluetooth.find(pad);
             tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
-                                flash_since, ConsoleBindingSets()[slot_set[i]].profile_name});
+                                flash_since, ConsoleBindingSets()[slot_set[i]].profile_name,
+                                address != pad_bluetooth.end() && !address->second.empty()});
         }
         {
             std::string handheld_name;

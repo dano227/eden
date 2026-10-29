@@ -577,6 +577,13 @@ private:
     /// connection instance -> player slot; entries survive a disconnect so the pad
     /// reclaims its own player when it returns
     std::map<u32, int> pad_slots;
+    /// Pads whose player was removed: they sit out until they reconnect (connection instance)
+    std::set<u32> benched_pads;
+    /// When each player was last removed, and whether its controller was turned off
+    std::array<qint64, 10> removed_at{};
+    std::array<bool, 10> removed_off{};
+    /// Each live pad's Bluetooth address ("" when it is not on Bluetooth or unknown)
+    std::map<u32, std::string> pad_bluetooth;
     /// connection instance -> stable identity (serial, else model GUID), for matching a
     /// returning pad that comes back under a new instance
     std::map<u32, std::string> pad_identity;
@@ -643,6 +650,17 @@ private:
     int overlay_drag_dy = 0;
     bool overlay_dragging = false;
     QPoint overlay_press;
+    /// The row under the mouse, which shows its buttons (-1: none), and those buttons as drawn:
+    /// a swap with the player above (-1) or below (1), or remove (0)
+    int overlay_hover_player = -1;
+    bool overlay_button_down = false;
+    struct OverlayButton {
+        QRect rect;
+        int player;
+        int action;
+        int target;
+    };
+    std::vector<OverlayButton> overlay_buttons;
     bool HandleOverlayMouse(QEvent* event);
     /// The player whose tab the next settings dialog opens on (-1: as usual)
     int open_player_tab = -1;
@@ -672,6 +690,8 @@ private:
         int player;
         bool joined;
         qint64 at;
+        /// Left because it was removed (1), or removed and turned off (2)
+        int removed = 0;
     };
     std::vector<ControllerHint> controller_hints;
     /// The flashes already turned into hints, per player (green, red)
