@@ -1004,6 +1004,22 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                          ConfigurePlayerAssignment::ModernComboStyle()
                    : QString{});
         if (!locked) {
+            // The manual modes get the tab exactly as it was: Home back at the right, the
+            // buttons back in their boxes as laid out
+            if (home_centred) {
+                home_centred = false;
+                ui->miscButtons->setStretch(0, 0);
+                delete ui->miscButtons->takeAt(ui->miscButtons->count() - 1);
+            }
+            for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
+                                        ui->buttonPlus}) {
+                if (QWidget* box = button->parentWidget(); box && box->layout()) {
+                    box->layout()->setAlignment(button, Qt::Alignment{});
+                }
+            }
+            if (QLayout* connect = ui->groupConnectedController->layout()) {
+                connect->setAlignment(ui->comboControllerType, Qt::Alignment{});
+            }
             // Back to the inherited fonts
             for (QGroupBox* box : bolded_boxes) {
                 if (box) {

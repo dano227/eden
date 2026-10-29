@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <numbers>
+#include <set>
 #include <sstream>
 #include <string>
 #include "common/logging.h"
@@ -702,6 +703,14 @@ bool IsMotionController(unsigned vendor, unsigned product) {
 
 /// Under Steam, takes the motion controllers off Steam's hide list, so SDL also opens the real
 /// devices (for their motion) next to Steam's sensorless virtual pads
+/// The controllers Steam Input hid and Eden opened again for their motion (vendor << 16 |
+/// product): motion sources for the automatic modes only, never offered as input devices, so
+/// the device lists stay as Steam leaves them
+std::set<u32>& UnhiddenControllers() {
+    static std::set<u32> unhidden;
+    return unhidden;
+}
+
 /// Logs the system's motion sensors and HID devices once, for adding handhelds and their gyros
 /// from users' logs: a handheld's built-in gyro is usually a sensor of the system (IIO), not of
 /// its gamepad, so SDL never sees it. Read-only.
@@ -764,6 +773,13 @@ void LogMotionHardware() {
 #endif
 }
 
+/// A controller Eden opened again under Steam Input for its motion alone
+bool IsUnhiddenController(SDL_Joystick* joystick) {
+    const u32 id = static_cast<u32>(SDL_GetJoystickVendor(joystick)) << 16 |
+                   SDL_GetJoystickProduct(joystick);
+    return UnhiddenControllers().contains(id);
+}
+
 void UnhideMotionControllers() {
     if (!std::getenv("SteamGameId") && !std::getenv("SteamAppId")) {
         return;
@@ -789,6 +805,7 @@ void UnhideMotionControllers() {
         if (std::sscanf(entry.c_str(), "%x/%x", &vendor, &product) == 2 &&
             IsMotionController(vendor, product)) {
             dropped += entry + ',';
+            UnhiddenControllers().insert(vendor << 16 | product);
             continue;
         }
         kept += entry + ',';
@@ -901,6 +918,9 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
             const SDL_GUID sdl_guid = SDL_GetJoystickGUID(joystick->GetSDLJoystick());
             const bool steam_virtual = sdl_guid.data[4] == 0xDE && sdl_guid.data[5] == 0x28 &&
                                        sdl_guid.data[8] == 0xFF && sdl_guid.data[9] == 0x11;
+            if (!steam_virtual && IsUnhiddenController(joystick->GetSDLJoystick())) {
+                continue;
+            }
             const std::string name =
                 fmt::format("{} {}{}", joystick->GetControllerName(), joystick->GetPort(),
                             steam_virtual ? " (Steam)" : "");
@@ -919,7 +939,8 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
     // Add dual controllers
     for (const auto& [key, value] : joystick_map) {
         for (const auto& joystick : value) {
-            if (joystick->IsJoyconRight()) {
+            if (joystick->IsJoyconRight() && joystick->GetSDLJoystick() &&
+                !IsUnhiddenController(joystick->GetSDLJoystick())) {
                 if (!joycon_pairs.contains(joystick->GetPort())) {
                     continue;
                 }
