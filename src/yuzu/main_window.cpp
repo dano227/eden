@@ -415,8 +415,10 @@ public:
     PlayerChips(QMenuBar* bar_, std::function<void(int)> open_settings_)
         : QWidget(bar_), bar{bar_}, open_settings{std::move(open_settings_)} {
         setAttribute(Qt::WA_NoSystemBackground);
-        // (A dark theme gives a plain widget a solid background)
-        setStyleSheet(QStringLiteral("background: transparent;"));
+        // (A dark theme gives a plain widget a solid background.) By name: the chips' tooltip,
+        // a child, would take a bare rule too and show as a black box under gamescope
+        setObjectName(QStringLiteral("playerChips"));
+        setStyleSheet(QStringLiteral("#playerChips { background: transparent; }"));
         setCursor(Qt::PointingHandCursor);
         long_press.setSingleShot(true);
         long_press.setInterval(400);

@@ -1011,10 +1011,14 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                 ui->miscButtons->setStretch(0, 0);
                 delete ui->miscButtons->takeAt(ui->miscButtons->count() - 1);
             }
-            for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
-                                        ui->buttonPlus}) {
-                if (QWidget* box = button->parentWidget(); box && box->layout()) {
-                    box->layout()->setAlignment(button, Qt::Alignment{});
+            if (shoulders_raised) {
+                shoulders_raised = false;
+                for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
+                                            ui->buttonPlus}) {
+                    if (auto* box = qobject_cast<QBoxLayout*>(
+                            button->parentWidget() ? button->parentWidget()->layout() : nullptr)) {
+                        delete box->takeAt(box->count() - 1);
+                    }
                 }
             }
             if (QLayout* connect = ui->groupConnectedController->layout()) {
@@ -1073,11 +1077,15 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                 connect->setAlignment(ui->comboControllerType, Qt::AlignTop);
             }
             // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
-            // trigger slider is below)
-            for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
-                                        ui->buttonPlus}) {
-                if (QWidget* box = button->parentWidget(); box && box->layout()) {
-                    box->layout()->setAlignment(button, Qt::AlignTop | Qt::AlignHCenter);
+            // trigger slider is below): a stretch under each button keeps it there
+            if (!shoulders_raised) {
+                shoulders_raised = true;
+                for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
+                                            ui->buttonPlus}) {
+                    if (auto* box = qobject_cast<QBoxLayout*>(
+                            button->parentWidget() ? button->parentWidget()->layout() : nullptr)) {
+                        box->addStretch(1);
+                    }
                 }
             }
         }

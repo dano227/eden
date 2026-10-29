@@ -191,6 +191,7 @@ private:
     bool connection_locked{};
     bool style_applied{};
     bool home_centred{};
+    bool shoulders_raised{};
     /// The section boxes given a bold title in the automatic modes
     std::vector<QPointer<QGroupBox>> bolded_boxes;
 
