@@ -48,8 +48,13 @@
 
 namespace {
 
-bool LaunchedThroughSteam() {
+bool RunningUnderSteam() {
     return std::getenv("SteamGameId") != nullptr || std::getenv("SteamAppId") != nullptr;
+}
+
+/// As the engine has it: Steam Input's virtual pads are the players (not bypassed)
+bool LaunchedThroughSteam() {
+    return RunningUnderSteam() && !Common::GetControllerConsoleState().steam_bypassed;
 }
 
 bool IsAutomatic(Settings::AppletMode mode) {
@@ -490,6 +495,45 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     indent->setContentsMargins(16, 0, 0, 0);
     indent->addWidget(handheld_panel);
     mode_layout->addLayout(indent);
+
+    // Under Steam: read the controllers directly instead of through Steam Input
+    steam_panel = new QFrame(mode_box);
+    steam_panel->setObjectName(QStringLiteral("steamPanel"));
+    steam_panel->setStyleSheet(
+        Themed(QStringLiteral("#steamPanel { border: 1px solid palette(mid); "
+                              "border-radius: 8px; background: palette(base); }")));
+    auto* steam_layout = new QHBoxLayout(steam_panel);
+    steam_layout->setContentsMargins(12, 8, 12, 8);
+    auto* steam_text = new QVBoxLayout();
+    auto* steam_title = new QLabel(tr("Bypass Steam Input"), steam_panel);
+    steam_title->setFont(title_font);
+    auto* steam_note = new QLabel(
+        tr("Eden reads your controllers directly instead of through Steam's virtual "
+           "controllers, so Steam Input layouts don't apply in Eden. Try this if a controller "
+           "doesn't work under Steam, such as the Steam Controller or a newer controller. Takes "
+           "effect after restarting Eden; connected controllers may be assigned to different "
+           "players."),
+        steam_panel);
+    steam_note->setWordWrap(true);
+    steam_note->setObjectName(QStringLiteral("note"));
+    steam_restart = new QLabel(tr("Restart Eden to apply this change."), steam_panel);
+    steam_text->addWidget(steam_title);
+    steam_text->addWidget(steam_note);
+    steam_text->addWidget(steam_restart);
+    steam_layout->addLayout(steam_text, 1);
+    steam_switch = new ToggleSwitch(steam_panel);
+    steam_switch->setToolTip(tr("On: Eden reads the controllers directly"));
+    steam_layout->addWidget(steam_switch, 0, Qt::AlignVCenter);
+    original_bypass = Settings::values.console_bypass_steam.GetValue();
+    steam_switch->setChecked(original_bypass);
+    connect(steam_switch, &QAbstractButton::toggled, this, [this](bool on) {
+        Settings::values.console_bypass_steam.SetValue(on);
+        UpdateModeUi();
+    });
+    auto* steam_indent = new QHBoxLayout();
+    steam_indent->setContentsMargins(16, 0, 0, 0);
+    steam_indent->addWidget(steam_panel);
+    mode_layout->addLayout(steam_indent);
     mode_info = new QLabel(mode_box);
     mode_info->setWordWrap(true);
     mode_layout->addWidget(mode_info);
@@ -739,6 +783,7 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
         Settings::values.console_history_seconds.SetValue(original_history_seconds);
         Settings::values.console_history_gaps.SetValue(original_history_gaps);
         Settings::values.console_debug_probes.SetValue(original_probes);
+        Settings::values.console_bypass_steam.SetValue(original_bypass);
     }
 }
 
@@ -781,6 +826,10 @@ void ConfigurePlayerAssignment::ApplyConfiguration() {
 void ConfigurePlayerAssignment::UpdateModeUi() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     handheld_panel->setVisible(handler_group->checkedId() == HandlerModern);
+    // (Bypass Steam Input: only under Steam; applies to a Modern Console start)
+    steam_panel->setVisible(handler_group->checkedId() == HandlerModern && RunningUnderSteam());
+    steam_restart->setVisible(steam_switch->isChecked() !=
+                              Common::GetControllerConsoleState().steam_bypassed);
     manual_panel->setVisible(handler_group->checkedId() == HandlerManual);
     // Only the automatic modes have live players to show
     const bool automatic = IsAutomatic(selected);

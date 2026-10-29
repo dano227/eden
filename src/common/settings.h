@@ -223,6 +223,10 @@ struct Values {
         linkage, 5, 1, 30, "console_history_seconds", Category::LibraryApplet};
     SwitchableSetting<bool> console_history_gaps{linkage, false, "console_history_gaps",
                                                  Category::LibraryApplet};
+    /// Modern Console under Steam: Eden reads the controllers itself instead of Steam Input's
+    /// virtual ones. Read at startup.
+    SwitchableSetting<bool> console_bypass_steam{linkage, false, "console_bypass_steam",
+                                                 Category::LibraryApplet};
     /// Detailed controller traces in the log (every assignment tick), for bug reports. The
     /// devices are described either way (what adding a handheld to the allowlist needs).
     SwitchableSetting<bool> console_debug_probes{linkage, false, "console_debug_probes",

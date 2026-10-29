@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <mutex>
 #include <string>
@@ -64,6 +65,9 @@ struct ControllerConsoleState {
         bool restore = false;
     };
     std::vector<ProfileRequest> profile_requests;
+    /// Bypass Steam Input took effect at startup: SDL has every controller, and the engine
+    /// leaves Steam's virtual pads alone (as launched outside Steam)
+    std::atomic<bool> steam_bypassed{false};
     /// Bumped whenever the engine reloads the emulated controllers (a swap, a pad arriving or
     /// leaving): the Controls page refreshes its player tabs from them when it changes
     unsigned long long generation = 0;

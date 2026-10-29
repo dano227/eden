@@ -87,6 +87,11 @@ private:
     QButtonGroup* manual_group = nullptr;
     QFrame* handheld_panel = nullptr;
     QAbstractButton* handheld_switch = nullptr;
+    /// Bypass Steam Input (under Steam), below the handheld option
+    QFrame* steam_panel = nullptr;
+    QAbstractButton* steam_switch = nullptr;
+    QLabel* steam_restart = nullptr;
+    bool original_bypass = false;
     QLabel* mode_info = nullptr;
     QWidget* display_box = nullptr;
     QWidget* about_box = nullptr;

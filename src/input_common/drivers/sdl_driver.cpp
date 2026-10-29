@@ -18,6 +18,7 @@
 #include "common/logging.h"
 #include "common/math_util.h"
 #include "common/param_package.h"
+#include "common/controller_console_state.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "common/vector_math.h"
@@ -849,7 +850,22 @@ SDLDriver::SDLDriver(std::string input_engine_) : InputEngine(std::move(input_en
 
     // SDL3 defaults Steam Controller Bluetooth HIDAPI support to off, which can disable gyro.
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAM, "1");
-    UnhideMotionControllers();
+    // Bypass Steam Input (Modern Console, under Steam): SDL takes every controller Steam hides,
+    // and the engine uses those instead of Steam's virtual pads
+    const auto mode = Settings::values.controller_applet_mode.GetValue();
+    const bool automatic = mode == Settings::AppletMode::ConsoleMode ||
+                           mode == Settings::AppletMode::HandheldConsoleMode;
+    if ((std::getenv("SteamGameId") || std::getenv("SteamAppId")) && automatic &&
+        Settings::values.console_bypass_steam.GetValue()) {
+        SDL_SetHintWithPriority(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, "", SDL_HINT_OVERRIDE);
+        SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK, "1", SDL_HINT_OVERRIDE);
+        Common::GetControllerConsoleState().steam_bypassed = true;
+        if (Settings::values.console_debug_probes.GetValue()) {
+            LOG_INFO(Input, "Steam Input bypassed: SDL opens every controller");
+        }
+    } else {
+        UnhideMotionControllers();
+    }
     LogMotionHardware();
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_SENSOR_FUSION, "1");
     SDL_SetHint(SDL_HINT_AUTO_UPDATE_SENSORS, "1");

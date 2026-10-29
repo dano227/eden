@@ -1934,12 +1934,13 @@ QString PadName(SDL_JoystickID id) {
     return out;
 }
 
-/// True when the emu was launched through Steam: Steam Input is then in the picture and
-/// the pads it hands over are virtual ones. A direct launch has neither.
+/// True when Steam Input's virtual pads are the players: launched through Steam, without
+/// Bypass Steam Input. Otherwise (a direct launch, or bypassed) the real controllers are, and
+/// everything works as launched outside Steam.
 bool LaunchedThroughSteam() {
     static const bool launched = std::getenv("SteamGameId") != nullptr ||
                                  std::getenv("SteamAppId") != nullptr;
-    return launched;
+    return launched && !Common::GetControllerConsoleState().steam_bypassed;
 }
 
 /// True for Steam Input's virtual pads. Their reported identity (GUID/serial) is not
@@ -3831,6 +3832,11 @@ void MainWindow::ApplyConsoleControllerMode() {
             const u32 id = ids[i];
             present.insert(id);
             first_seen.try_emplace(id, now);
+            // Bypassed: the real controllers play, and Steam's virtual pads (the same
+            // controllers again) are left alone
+            if (Common::GetControllerConsoleState().steam_bypassed && IsSteamVirtualPad(id)) {
+                continue;
+            }
             if (LaunchedThroughSteam() && !IsSteamVirtualPad(id)) {
                 // A real device next to Steam's virtual pads, unhidden for its motion: never a
                 // player; logged once, with the virtual pads of the same model
