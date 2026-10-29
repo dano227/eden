@@ -335,8 +335,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* mode_layout = new QVBoxLayout(mode_box);
     handler_group = new QButtonGroup(this);
     auto* handler_row = new QHBoxLayout();
-    handler_row->addWidget(MakeSegmented(mode_box, {tr("Manual"), tr("Modern Console")},
-                                         {HandlerManual, HandlerModern}, handler_group));
+    handler_row->addWidget(MakeSegmented(mode_box, {tr("Modern Console"), tr("Manual")},
+                                         {HandlerModern, HandlerManual}, handler_group));
     handler_row->addStretch(1);
     mode_layout->addLayout(handler_row);
 
@@ -367,9 +367,18 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
          static_cast<int>(Settings::AppletMode::LLE)},
         manual_group));
     manual_row->addStretch(1);
+    // What Manual itself does, under the choices
+    auto* manual_about = new QLabel(tr("In Manual, each player's controller is set by hand in "
+                                       "its player tab (P1 to P8) and stays until you change "
+                                       "it. The same choices are in System > Applets, also per "
+                                       "game."),
+                                    manual_panel);
+    manual_about->setWordWrap(true);
+    manual_about->setObjectName(QStringLiteral("note"));
     manual_layout->addWidget(manual_title);
     manual_layout->addWidget(manual_note);
     manual_layout->addLayout(manual_row);
+    manual_layout->addWidget(manual_about);
     auto* manual_indent = new QHBoxLayout();
     manual_indent->setContentsMargins(16, 0, 0, 0);
     manual_indent->addWidget(manual_panel);
