@@ -614,6 +614,8 @@ private:
     /// Experimental reader: Steam's pads (by BluetoothKey) paired with the Valve controllers
     /// read directly, by port, when identical ones need a button press to tell apart
     std::map<std::string, std::size_t> valve_pairs;
+    /// Each player's Valve controller port as last logged (port + 1, 0 none)
+    std::array<std::size_t, 10> logged_valve_port{};
     void LearnValvePairs();
     /// connection instance -> stable identity (serial, else model GUID), for matching a
     /// returning pad that comes back under a new instance

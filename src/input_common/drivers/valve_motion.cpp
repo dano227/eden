@@ -233,7 +233,10 @@ void ValveMotion::Read(std::stop_token stop, std::string path, std::size_t port,
         last_sample = now;
     }
     ::close(fd);
-    LOG_INFO(Input, "Valve controller port {} gone ({})", port, path);
+    // (Only a controller interface was a device: the keyboard and mouse ones never were)
+    if (known) {
+        LOG_INFO(Input, "Valve controller port {} gone ({})", port, path);
+    }
     std::scoped_lock lock{mutex};
     devices.erase(path);
     reading.erase(path);

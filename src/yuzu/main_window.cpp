@@ -5310,6 +5310,16 @@ void MainWindow::ApplyConsoleControllerMode() {
                     valve_port = paired->second;
                 }
             }
+            // (Probes: logged when it changes, like the real device's below; port + 1, 0 none)
+            const std::size_t valve_logged = valve_port ? *valve_port + 1 : 0;
+            if (valve_logged != logged_valve_port[slot]) {
+                logged_valve_port[slot] = valve_logged;
+                if (Common::ControllerProbes()) {
+                    LOG_INFO(Frontend, "console-mode: P{} motion from {}", slot + 1,
+                             valve_port ? fmt::format("Valve controller port {}", *valve_port)
+                                        : std::string{"no Valve controller"});
+                }
+            }
             if (valve_port) {
                 want.motions.fill(ValveMotionParam(*valve_port));
             } else if (Common::SteamPadsInUse()) {
