@@ -671,20 +671,23 @@ private:
     void FitToScreenUnderGamescope(QWidget* window);
     void RenderControllerOverlay();
     void PollControllerActivity();
-    /// The last buttons each player pressed (emulated, as the game sees them), newest last,
-    /// for the overlay; cleared when another controller takes the player
+    /// The last buttons each controller pressed (emulated, as the game sees them), newest last,
+    /// for the overlay; by the controller's identity, so the history follows a controller that
+    /// swaps players. Buttons pressed together share their time.
     struct ButtonPress {
         int button;
         qint64 at;
     };
-    std::array<std::deque<ButtonPress>, 10> press_history{};
+    std::map<std::string, std::deque<ButtonPress>> press_history;
+    /// The controller each player's buttons were last read for: a new one starts from what it
+    /// holds, so changing controllers records no presses
+    std::array<std::string, 10> history_ident{};
     std::array<std::bitset<32>, 10> buttons_down{};
     /// Stick moves in the history: StickMoveButton + stick * 4 + direction (left, up, right,
     /// down), stick 0 the left one
     static constexpr int StickMoveButton = 64;
     /// The direction each player's sticks point, plus one (0 at rest)
     std::array<std::array<int, 2>, 10> stick_direction{};
-    std::array<qint64, 10> press_history_since{};
     /// Reads the players' buttons; true when the history changed (a press, or one expiring)
     bool PollButtonHistory();
     /// A controller named on screen for a moment: it joined as a player, or left one

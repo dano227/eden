@@ -20,6 +20,7 @@ class QFrame;
 class QVBoxLayout;
 class QLabel;
 class QPushButton;
+class QSlider;
 class QTimer;
 class QToolButton;
 class QWidget;
@@ -95,6 +96,16 @@ private:
     bool original_overlay = false;
     QAbstractButton* hints_toggle = nullptr;
     bool original_hints = true;
+    /// The overlay's button history options (indented under Controller Overlay)
+    QWidget* history_options = nullptr;
+    QAbstractButton* history_toggle = nullptr;
+    QSlider* history_size = nullptr;
+    QSlider* history_seconds = nullptr;
+    QAbstractButton* gaps_toggle = nullptr;
+    bool original_history = true;
+    int original_history_size = 10;
+    int original_history_seconds = 5;
+    bool original_history_gaps = false;
     QWidget* now_box = nullptr;
 
     QWidget* builtin_row = nullptr;

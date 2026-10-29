@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
+#include <tuple>
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -32,6 +33,7 @@
 #include <QRadioButton>
 #include <QAbstractItemView>
 #include <QScrollArea>
+#include <QSlider>
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
@@ -554,8 +556,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* display = new QGroupBox(tr("On-Screen Display"), this);
     display_box = display;
     auto* display_layout = new QVBoxLayout(display);
-    const auto add_switch = [display, display_layout](const QString& title,
-                                                      const QString& note) {
+    const auto add_switch_to = [display](QVBoxLayout* to, const QString& title,
+                                         const QString& note) {
         auto* line = new QHBoxLayout();
         auto* text = new QVBoxLayout();
         text->setSpacing(1);
@@ -571,8 +573,11 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
         line->addLayout(text, 1);
         auto* toggle = new ToggleSwitch(display);
         line->addWidget(toggle, 0, Qt::AlignVCenter);
-        display_layout->addLayout(line);
+        to->addLayout(line);
         return toggle;
+    };
+    const auto add_switch = [&](const QString& title, const QString& note) {
+        return add_switch_to(display_layout, title, note);
     };
     // The same switch as View > Show Controller Overlay
     overlay_toggle = add_switch(tr("Controller Overlay"),
@@ -582,6 +587,75 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     overlay_toggle->setChecked(original_overlay);
     connect(overlay_toggle, &QAbstractButton::toggled, this,
             [](bool shown) { Settings::values.console_debug_overlay.SetValue(shown); });
+
+    // The overlay's own options, indented under it: the button history and how it shows
+    history_options = new QWidget(display);
+    auto* history_layout = new QVBoxLayout(history_options);
+    history_layout->setContentsMargins(20, 0, 0, 4);
+    history_toggle = add_switch_to(history_layout, tr("Button History"),
+                                   tr("The last buttons each player pressed, beside their row. "
+                                      "Buttons pressed together show as one input."));
+    // A slider with its value beside it
+    const auto add_slider = [this, display, history_layout](const QString& title, int min,
+                                                            int max, int value,
+                                                            const QString& unit) {
+        auto* line = new QHBoxLayout();
+        auto* label = new QLabel(title, display);
+        line->addWidget(label);
+        auto* slider = new QSlider(Qt::Horizontal, display);
+        slider->setRange(min, max);
+        slider->setValue(value);
+        slider->setPageStep(1);
+        line->addWidget(slider, 1);
+        auto* shown = new QLabel(display);
+        shown->setMinimumWidth(shown->fontMetrics().horizontalAdvance(unit.arg(max)) + 4);
+        shown->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        shown->setText(unit.arg(value));
+        line->addWidget(shown);
+        connect(slider, &QSlider::valueChanged, this,
+                [shown, unit](int v) { shown->setText(unit.arg(v)); });
+        auto* row = new QWidget(display);
+        row->setLayout(line);
+        line->setContentsMargins(0, 0, 0, 0);
+        history_layout->addWidget(row);
+        return std::pair{slider, row};
+    };
+    original_history = Settings::values.console_history.GetValue();
+    original_history_size = Settings::values.console_history_size.GetValue();
+    original_history_seconds = Settings::values.console_history_seconds.GetValue();
+    original_history_gaps = Settings::values.console_history_gaps.GetValue();
+    QWidget* size_row = nullptr;
+    QWidget* seconds_row = nullptr;
+    std::tie(history_size, size_row) =
+        add_slider(tr("Inputs kept"), 5, 20, original_history_size, tr("%1"));
+    std::tie(history_seconds, seconds_row) =
+        add_slider(tr("Expire after"), 1, 30, original_history_seconds, tr("%1 s"));
+    gaps_toggle = add_switch_to(history_layout, tr("Time Between Presses"),
+                                tr("The milliseconds between inputs, never more than the expire "
+                                   "time."));
+    display_layout->addWidget(history_options);
+    history_toggle->setChecked(original_history);
+    gaps_toggle->setChecked(original_history_gaps);
+    connect(history_toggle, &QAbstractButton::toggled, this,
+            [](bool shown) { Settings::values.console_history.SetValue(shown); });
+    connect(history_size, &QSlider::valueChanged, this,
+            [](int v) { Settings::values.console_history_size.SetValue(v); });
+    connect(history_seconds, &QSlider::valueChanged, this,
+            [](int v) { Settings::values.console_history_seconds.SetValue(v); });
+    connect(gaps_toggle, &QAbstractButton::toggled, this,
+            [](bool shown) { Settings::values.console_history_gaps.SetValue(shown); });
+    // Only what applies can be changed: the history's options while it shows, all of them
+    // while the overlay does
+    const auto update_history_options = [this, size_row, seconds_row] {
+        const bool history_on = history_toggle->isChecked();
+        history_options->setEnabled(overlay_toggle->isChecked());
+        size_row->setEnabled(history_on);
+        seconds_row->setEnabled(history_on);
+        gaps_toggle->setEnabled(history_on);
+    };
+    connect(overlay_toggle, &QAbstractButton::toggled, this, update_history_options);
+    connect(history_toggle, &QAbstractButton::toggled, this, update_history_options);
+    update_history_options();
     hints_toggle = add_switch(tr("Controller Hints"),
                               tr("Names a controller in the bottom-left corner for a moment "
                                  "when it joins as a player or leaves."));
@@ -646,6 +720,10 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
             static_cast<Settings::AppletMode>(original_mode));
         Settings::values.console_debug_overlay.SetValue(original_overlay);
         Settings::values.console_hints.SetValue(original_hints);
+        Settings::values.console_history.SetValue(original_history);
+        Settings::values.console_history_size.SetValue(original_history_size);
+        Settings::values.console_history_seconds.SetValue(original_history_seconds);
+        Settings::values.console_history_gaps.SetValue(original_history_gaps);
     }
 }
 

@@ -3048,10 +3048,23 @@ void MainWindow::RenderControllerOverlay() {
     for (int k = 0; k < 8; ++k) {
         widest_chip = (std::max)(widest_chip, chip_width(chip(StickMoveButton + k).first));
     }
-    // An entry lives 5 seconds, then shrinks away
-    constexpr qint64 press_life_ms = 5000;
+    // An entry lives as long as set, then shrinks away
+    const bool show_history = Settings::values.console_history.GetValue();
+    const bool show_gaps = Settings::values.console_history_gaps.GetValue();
+    const int history_size = Settings::values.console_history_size.GetValue();
+    const qint64 press_life_ms = Settings::values.console_history_seconds.GetValue() * 1000LL;
     constexpr qint64 press_shrink_ms = 400;
-    const auto press_scale = [now_ms](const ButtonPress& press) {
+    // The time between inputs, small and grey between their chips: never more than an entry
+    // lives (an older one would be gone)
+    QFont gap_font;
+    gap_font.setPixelSize(9);
+    gap_font.setBold(true);
+    const QFontMetrics gap_fm{gap_font};
+    const auto gap_text = [press_life_ms](qint64 ms) {
+        return QStringLiteral("%1ms").arg((std::min)(ms, press_life_ms));
+    };
+    const int widest_gap = gap_fm.horizontalAdvance(gap_text(press_life_ms)) + 6;
+    const auto press_scale = [now_ms, press_life_ms](const ButtonPress& press) {
         const qint64 over = now_ms - press.at - press_life_ms;
         if (over <= 0) {
             return 1.0;
@@ -3064,8 +3077,13 @@ void MainWindow::RenderControllerOverlay() {
         name_w = (std::max)(name_w, name_fm.horizontalAdvance(overlay_row_name[row.player]));
     }
     const int controller_w = inner + badge_w + 8 + name_w + inner + 4;
-    // Room for ten of the widest chips, so the image keeps its size as the bubbles change
-    const int history_room = inner * 2 + 10 * (widest_chip + chip_gap);
+    // Room for as many of the widest chips as the history keeps (and the times between them),
+    // so the image keeps its size as the bubbles change; without the history, room for a
+    // hovered row's buttons
+    const int history_room =
+        show_history ? inner * 2 + history_size * (widest_chip + chip_gap) +
+                           (show_gaps ? (history_size - 1) * widest_gap : 0)
+                     : 200;
     const int width = controller_w + bubble_gap + history_room + 2;
     const int count = static_cast<int>(overlay_rows.size());
     const int height = count * row_h + (count - 1) * row_gap + 2;
@@ -3218,12 +3236,15 @@ void MainWindow::RenderControllerOverlay() {
         // The history bubble: the last inputs, newest first and brightest, each shrinking away
         // at the far end as it expires (and the bubble with them). Buttons pressed together
         // share a capsule, joined by "+"; inputs that no longer fit drop off the far end.
-        const auto& presses = press_history[row.player];
+        static const std::deque<ButtonPress> none;
+        const auto found = press_history.find(overlay_row_ident[row.player]);
+        const auto& presses = show_history && found != press_history.end() ? found->second : none;
         struct Input {
             std::size_t first;
             std::size_t count;
             double scale;
             double width;
+            double gap_w; ///< the time to the newer input, drawn before this one (0: none)
         };
         constexpr double plus_w = 10;
         constexpr double capsule_pad = 3;
@@ -3244,11 +3265,17 @@ void MainWindow::RenderControllerOverlay() {
             }
             width *= scale;
             if (scale > 0.0) {
-                if (chips_w + width > history_room - inner * 2) {
+                // The time from this input to the newer one before it
+                double gap_w = 0;
+                if (show_gaps && !inputs.empty()) {
+                    gap_w = gap_fm.horizontalAdvance(gap_text(
+                                presses[inputs.back().first].at - presses[first].at)) + 6;
+                }
+                if (chips_w + gap_w + width > history_room - inner * 2) {
                     break;
                 }
-                inputs.push_back({first, end - first, scale, width});
-                chips_w += width + chip_gap * scale;
+                inputs.push_back({first, end - first, scale, width, gap_w});
+                chips_w += gap_w + width + chip_gap * scale;
             }
             end = first;
         }
@@ -3265,6 +3292,16 @@ void MainWindow::RenderControllerOverlay() {
                 const int alpha = static_cast<int>((255 - static_cast<int>(g) * 12) * scale);
                 const double h = chip_h * scale;
                 const bool together = input.count > 1;
+                if (input.gap_w > 0) {
+                    painter.setFont(gap_font);
+                    painter.setPen(QColor(200, 204, 210, alpha));
+                    painter.drawText(QRectF(cx - chip_gap * scale, y, input.gap_w, row_h),
+                                     Qt::AlignCenter,
+                                     gap_text(presses[inputs[g - 1].first].at -
+                                              presses[input.first].at));
+                    painter.setPen(Qt::NoPen);
+                    cx += input.gap_w;
+                }
                 double x = cx;
                 if (together) {
                     // The capsule: a light band with an outline around the buttons
@@ -3452,8 +3489,9 @@ bool MainWindow::OverlayAnimating() const {
     if (!controller_hints.empty()) {
         return true;
     }
-    for (const auto& history : press_history) {
-        if (!history.empty() && now_ms - history.front().at > 4900) {
+    const qint64 life_ms = Settings::values.console_history_seconds.GetValue() * 1000LL;
+    for (const auto& [ident, history] : press_history) {
+        if (!history.empty() && now_ms - history.front().at > life_ms - 100) {
             return true;
         }
     }
@@ -3559,17 +3597,25 @@ bool MainWindow::PollButtonHistory() {
     auto& hid = QtCommon::system->HIDCore();
     const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
     bool pressed = false;
+    const qint64 life_ms = Settings::values.console_history_seconds.GetValue() * 1000LL;
+    const std::size_t size = static_cast<std::size_t>(Settings::values.console_history_size.GetValue());
+    // A controller that left takes its history with it (back, it starts over)
+    std::erase_if(press_history, [this, &pressed](const auto& entry) {
+        const bool kept = std::any_of(overlay_rows.begin(), overlay_rows.end(), [&](const auto& row) {
+            return row.pad != 0 && overlay_row_ident[row.player] == entry.first;
+        });
+        pressed |= !kept;
+        return !kept;
+    });
     for (const auto& row : overlay_rows) {
-        if (row.pad == 0 || row.player < 0 || row.player >= 8) {
+        if (row.pad == 0 || row.player < 0 || row.player >= 8 ||
+            overlay_row_ident[row.player].empty()) {
             continue;
         }
         const int i = row.player;
-        // Another controller took the player: its history starts over
-        if (row.flash == 1 && row.flash_since != press_history_since[i]) {
-            press_history_since[i] = row.flash_since;
-            press_history[i].clear();
-            pressed = true;
-        }
+        const std::string& ident = overlay_row_ident[i];
+        const bool fresh = history_ident[i] != ident;
+        history_ident[i] = ident;
         const auto& player = Settings::values.players.GetValue()[i];
         auto* controller = i == 0 && player.controller_type == Settings::ControllerType::Handheld
                                ? hid.GetEmulatedController(Core::HID::NpadIdType::Handheld)
@@ -3578,13 +3624,13 @@ bool MainWindow::PollButtonHistory() {
             continue;
         }
         // Entries gone through their life and shrink leave the history
-        auto& history = press_history[i];
-        while (!history.empty() && now_ms - history.front().at > 5400) {
+        auto& history = press_history[ident];
+        while (!history.empty() && now_ms - history.front().at > life_ms + 400) {
             history.pop_front();
             pressed = true;
         }
         // Presses within 50ms of an input's first (about three frames) are one input, as a
-        // fighting game's training mode shows them: they share its time. Ten inputs at most.
+        // fighting game's training mode shows them: they share its time. As many inputs as set.
         constexpr qint64 together_ms = 50;
         const auto record = [&](int button) {
             qint64 at = now_ms;
@@ -3606,7 +3652,7 @@ bool MainWindow::PollButtonHistory() {
             for (const auto& press : history) {
                 inputs.insert(press.at);
             }
-            while (inputs.size() > 10) {
+            while (inputs.size() > size) {
                 const qint64 oldest = history.front().at;
                 while (!history.empty() && history.front().at == oldest) {
                     history.pop_front();
@@ -3626,7 +3672,9 @@ bool MainWindow::PollButtonHistory() {
                 const int direction = std::abs(x) > std::abs(y) ? (x < 0 ? 0 : 2) : (y > 0 ? 1 : 3);
                 if (direction + 1 != pointing) {
                     pointing = direction + 1;
-                    record(StickMoveButton + s * 4 + direction);
+                    if (!fresh) {
+                        record(StickMoveButton + s * 4 + direction);
+                    }
                 }
             } else if (reach < 0.3f) {
                 pointing = 0;
@@ -3636,7 +3684,7 @@ bool MainWindow::PollButtonHistory() {
         auto& down = buttons_down[i];
         for (int b = 0; b < Settings::NativeButton::NumButtons; ++b) {
             const bool held = values[b].value;
-            if (held && !down[b]) {
+            if (held && !down[b] && !fresh) {
                 record(b);
             }
             down[b] = held;

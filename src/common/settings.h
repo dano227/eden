@@ -213,6 +213,16 @@ struct Values {
     /// Name a controller on screen for a moment when it takes a player or leaves one
     SwitchableSetting<bool> console_hints{linkage, true, "console_hints",
                                           Category::LibraryApplet};
+    /// The overlay's button history: shown, how many inputs it keeps, how long each lasts (in
+    /// seconds), and the time between inputs
+    SwitchableSetting<bool> console_history{linkage, true, "console_history",
+                                            Category::LibraryApplet};
+    SwitchableSetting<int, true> console_history_size{
+        linkage, 10, 5, 20, "console_history_size", Category::LibraryApplet};
+    SwitchableSetting<int, true> console_history_seconds{
+        linkage, 5, 1, 30, "console_history_seconds", Category::LibraryApplet};
+    SwitchableSetting<bool> console_history_gaps{linkage, false, "console_history_gaps",
+                                                 Category::LibraryApplet};
 
     /// True when the user declared the handheld's own pad by hand (the picker or the
     /// Identify button); the auto latch must not overwrite it
