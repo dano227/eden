@@ -3609,14 +3609,42 @@ void MainWindow::ApplyConsoleControllerMode() {
                     }
                 }
             }
-            const auto& own = profile[set_index];
             slot_set[slot] = set_index;
             Settings::PlayerInput want = players[slot];
-            want.buttons = own.buttons;
-            want.analogs = own.analogs;
-            want.motions = own.motions;
-            want.profile_name = own.profile_name;
-            RouteSdlBindings(want, binding->first, binding->second);
+            if (has_sdl(profile[set_index])) {
+                const auto& own = profile[set_index];
+                want.buttons = own.buttons;
+                want.analogs = own.analogs;
+                want.motions = own.motions;
+                want.profile_name = own.profile_name;
+                RouteSdlBindings(want, binding->first, binding->second);
+            } else {
+                // No controller mappings to carry (a fresh setup maps player one to the
+                // keyboard): the controller gets its own default mapping, for this session
+                Common::ParamPackage device;
+                device.Set("engine", "sdl");
+                device.Set("guid", binding->first);
+                device.Set("port", binding->second);
+                want.buttons.fill({});
+                want.analogs.fill({});
+                want.motions.fill({});
+                for (const auto& [index, param] : input_subsystem->GetButtonMappingForDevice(device)) {
+                    want.buttons[index] = param.Serialize();
+                }
+                for (const auto& [index, param] : input_subsystem->GetAnalogMappingForDevice(device)) {
+                    want.analogs[index] = param.Serialize();
+                }
+                for (const auto& [index, param] : input_subsystem->GetMotionMappingForDevice(device)) {
+                    want.motions[index] = param.Serialize();
+                }
+                want.profile_name.clear();
+                static std::set<u32> defaulted;
+                if (defaulted.insert(id).second) {
+                    LOG_INFO(Frontend, "console-mode: P{} set has no controller mappings: inst={} "
+                                       "gets its default mapping",
+                             set_index + 1, id);
+                }
+            }
             // Under Steam the virtual pad has no motion: take the paired real device's. The
             // deck's own controller is unique (28DE:1205); another model pairs when only one
             // of it is connected (the virtual pad reports the real controller's ids).
