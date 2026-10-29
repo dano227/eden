@@ -876,6 +876,11 @@ void ConfigureInput::UpdateTabArrows() {
     }
 }
 
+QWidget* ConfigureInput::PlayerTab(int player) const {
+    return player >= 0 && player < static_cast<int>(player_tabs.size()) ? player_tabs[player]
+                                                                          : nullptr;
+}
+
 QList<QWidget*> ConfigureInput::GetSubTabs() const {
     // The settings dialog shows these, not this widget's own tab bar
     return {

@@ -93,6 +93,9 @@ public:
 
     QList<QWidget*> GetSubTabs() const;
 
+    /// A player's tab (0-based player)
+    QWidget* PlayerTab(int player) const;
+
 private:
     void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* object, QEvent* event) override;

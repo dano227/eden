@@ -55,6 +55,7 @@
 
 #include "configuration/configure_dialog.h"
 #include "configuration/configure_input.h"
+#include "configuration/configure_player_assignment.h"
 #include "configuration/configure_per_game.h"
 #include "configuration/configure_tas.h"
 #include "configuration/input_profiles.h"
@@ -69,6 +70,9 @@
 #define QT_NO_OPENGL
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#include <QHelpEvent>
+#include <QMenuBar>
+#include <QToolTip>
 #include <QStyleHints>
 #endif
 
@@ -374,6 +378,257 @@ inline static bool isDarkMode() {
 }
 #endif // _WIN32
 
+namespace {
+
+/// Asks the engine to put the players in this order: place k (the k-th lowest player of the
+/// ones listed) takes the controller player order[k] has now, as one swap at a time
+void RequestPlayerOrder(const std::vector<int>& order) {
+    std::vector<int> places = order;
+    std::sort(places.begin(), places.end());
+    if (order == places) {
+        return;
+    }
+    std::map<int, int> holder;
+    for (const int place : places) {
+        holder[place] = place;
+    }
+    auto& state = Common::GetControllerConsoleState();
+    std::scoped_lock lock{state.mutex};
+    for (std::size_t k = 0; k < places.size(); ++k) {
+        int from = places[k];
+        for (const auto& [place, original] : holder) {
+            if (original == order[k]) {
+                from = place;
+            }
+        }
+        if (from != places[k]) {
+            state.swap_requests.emplace_back(places[k], from);
+            std::swap(holder[places[k]], holder[from]);
+        }
+    }
+}
+
+/// The players as chips after the last menu (the automatic modes): a click rumbles a player's
+/// controller and opens its settings tab; held, a chip drags left or right to change the order
+class PlayerChips : public QWidget {
+public:
+    PlayerChips(QMenuBar* bar_, std::function<void(int)> open_settings_)
+        : QWidget(bar_), bar{bar_}, open_settings{std::move(open_settings_)} {
+        setAttribute(Qt::WA_NoSystemBackground);
+        // (A dark theme gives a plain widget a solid background)
+        setStyleSheet(QStringLiteral("background: transparent;"));
+        setCursor(Qt::PointingHandCursor);
+        long_press.setSingleShot(true);
+        long_press.setInterval(400);
+        QObject::connect(&long_press, &QTimer::timeout, this, [this] {
+            if (pressed >= 0) {
+                dragging = true;
+                setCursor(Qt::ClosedHandCursor);
+                update();
+            }
+        });
+        QObject::connect(&poll, &QTimer::timeout, this, [this] { Refresh(); });
+        poll.start(100);
+        hide();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter{this};
+        painter.setRenderHint(QPainter::Antialiasing);
+        QFont font = bar->font();
+        font.setBold(true);
+        painter.setFont(font);
+        const auto chip = [&](const Common::ControllerConsoleState::PlayerRow& row, QRectF rect) {
+            const QColor color = ConfigurePlayerAssignment::PlayerColor(row.player);
+            // Filled while its controller has an input held, else an outline
+            const bool lit = row.active;
+            if (lit) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(color);
+            } else {
+                painter.setPen(QPen(color, 1.5));
+                painter.setBrush(Qt::NoBrush);
+            }
+            painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2);
+            painter.setPen(lit ? QColor(Qt::white) : color);
+            painter.drawText(rect, Qt::AlignCenter, QStringLiteral("P%1").arg(row.player + 1));
+        };
+        for (std::size_t k = 0; k < rows.size(); ++k) {
+            const QRectF rect = ChipRect(static_cast<int>(k));
+            if (dragging && static_cast<int>(k) == pressed) {
+                // Where the dragged chip came from
+                QColor edge = ConfigurePlayerAssignment::PlayerColor(rows[k].player);
+                edge.setAlpha(100);
+                painter.setPen(QPen(edge, 1, Qt::DashLine));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2);
+                continue;
+            }
+            chip(rows[k], rect);
+        }
+        if (dragging && pressed >= 0 && pressed < static_cast<int>(rows.size())) {
+            chip(rows[static_cast<std::size_t>(pressed)], ChipRect(pressed).translated(drag_dx, 0));
+        }
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() != Qt::LeftButton) {
+            return;
+        }
+        pressed = IndexAt(event->position().x());
+        press_x = event->position().x();
+        drag_dx = 0;
+        dragging = false;
+        if (pressed >= 0) {
+            long_press.start();
+        }
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (dragging) {
+            drag_dx = event->position().x() - press_x;
+            update();
+        }
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        long_press.stop();
+        const int index = pressed;
+        pressed = -1;
+        setCursor(Qt::PointingHandCursor);
+        if (index < 0 || index >= static_cast<int>(rows.size())) {
+            dragging = false;
+            return;
+        }
+        if (dragging) {
+            dragging = false;
+            // The players in the order of their chips, the dragged one where it was let go
+            std::vector<std::pair<double, int>> centres;
+            for (std::size_t k = 0; k < rows.size(); ++k) {
+                const double x = ChipRect(static_cast<int>(k)).center().x() +
+                                 (static_cast<int>(k) == index ? drag_dx : 0.0);
+                centres.emplace_back(x, rows[k].player);
+            }
+            std::stable_sort(centres.begin(), centres.end());
+            std::vector<int> order;
+            for (const auto& [x, player] : centres) {
+                order.push_back(player);
+            }
+            RequestPlayerOrder(order);
+            update();
+            return;
+        }
+        if (IndexAt(event->position().x()) != index) {
+            return;
+        }
+        // A click: the controller rumbles (vibration on), and its settings open
+        const int player = rows[static_cast<std::size_t>(index)].player;
+        if (Settings::values.vibration_enabled.GetValue() &&
+            Settings::values.players.GetValue()[player].vibration_enabled) {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            state.rumble_requests.push_back(player);
+        }
+        QTimer::singleShot(0, this, [this, player] { open_settings(player); });
+    }
+
+    bool event(QEvent* event) override {
+        if (event->type() == QEvent::ToolTip) {
+            const auto* help = static_cast<QHelpEvent*>(event);
+            const int index = IndexAt(help->pos().x());
+            if (index >= 0) {
+                const auto& row = rows[static_cast<std::size_t>(index)];
+                QToolTip::showText(help->globalPos(),
+                                   QObject::tr("P%1: %2\nClick: rumble and open its settings\n"
+                                               "Hold, then drag: change the player order")
+                                       .arg(row.player + 1)
+                                       .arg(QString::fromStdString(row.name)),
+                                   this);
+            } else {
+                QToolTip::hideText();
+            }
+            return true;
+        }
+        return QWidget::event(event);
+    }
+
+private:
+    static constexpr int chip_w = 34;
+    static constexpr int chip_gap = 4;
+
+    QRectF ChipRect(int k) const {
+        return QRectF(4 + k * (chip_w + chip_gap), 3, chip_w, height() - 6);
+    }
+
+    int IndexAt(double x) const {
+        for (int k = 0; k < static_cast<int>(rows.size()); ++k) {
+            if (ChipRect(k).adjusted(-chip_gap / 2.0, 0, chip_gap / 2.0, 0).contains(x, height() / 2.0)) {
+                return k;
+            }
+        }
+        return -1;
+    }
+
+    void Refresh() {
+        std::vector<Common::ControllerConsoleState::PlayerRow> now;
+        bool engine_active = false;
+        {
+            auto& state = Common::GetControllerConsoleState();
+            std::scoped_lock lock{state.mutex};
+            engine_active = state.engine_active;
+            for (const auto& row : state.players) {
+                if (!row.leaving) {
+                    now.push_back(row);
+                }
+            }
+        }
+        const auto mode = Settings::values.controller_applet_mode.GetValue();
+        const bool automatic = mode == Settings::AppletMode::ConsoleMode ||
+                               mode == Settings::AppletMode::HandheldConsoleMode;
+        // Right after the last menu
+        int x = 0;
+        for (QAction* action : bar->actions()) {
+            if (action->isVisible()) {
+                const QRect place = bar->actionGeometry(action);
+                if (place.isValid()) {
+                    x = (std::max)(x, place.right());
+                }
+            }
+        }
+        const QRect place(x + 10, 0,
+                          8 + static_cast<int>(now.size()) * (chip_w + chip_gap), bar->height());
+        if (geometry() != place) {
+            setGeometry(place);
+        }
+        const bool shown = automatic && engine_active && !now.empty();
+        if (isVisible() != shown) {
+            setVisible(shown);
+        }
+        // Repainted when a player or its input changes (not while one is being dragged)
+        const auto same = [](const auto& a, const auto& b) {
+            return a.player == b.player && a.active == b.active && a.name == b.name;
+        };
+        if (!dragging && (now.size() != rows.size() ||
+                          !std::equal(now.begin(), now.end(), rows.begin(), same))) {
+            rows = std::move(now);
+            update();
+        }
+    }
+
+    QMenuBar* bar;
+    std::function<void(int)> open_settings;
+    std::vector<Common::ControllerConsoleState::PlayerRow> rows;
+    QTimer poll;
+    QTimer long_press;
+    int pressed = -1;
+    double press_x = 0;
+    double drag_dx = 0;
+    bool dragging = false;
+};
+
+} // Anonymous namespace
+
 MainWindow::MainWindow(bool has_broken_vulkan)
     : ui{std::make_unique<Ui::MainWindow>()},
       input_subsystem{std::make_shared<InputCommon::InputSubsystem>()}, user_data_migrator{this} {
@@ -489,6 +744,11 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     mouse_hide_timer.setInterval(default_mouse_hide_timeout);
     connect(&mouse_hide_timer, &QTimer::timeout, this, &MainWindow::HideMouseCursor);
     connect(ui->menubar, &QMenuBar::hovered, this, &MainWindow::ShowMouseCursor);
+    // The players, after the last menu, in the automatic modes
+    new PlayerChips(ui->menubar, [this](int player) {
+        open_player_tab = player;
+        OnConfigure();
+    });
 
     update_input_timer.setInterval(default_input_update_timeout);
     connect(&update_input_timer, &QTimer::timeout, this, &MainWindow::UpdateInputDrivers);
@@ -5999,6 +6259,11 @@ void MainWindow::OnConfigure() {
     ConfigureDialog configure_dialog(this, hotkey_registry, input_subsystem.get(),
                                      vk_device_records, *QtCommon::system,
                                      !multiplayer_state->IsHostingPublicRoom());
+    // Opened from a player chip: straight to that player's tab
+    if (open_player_tab >= 0) {
+        configure_dialog.OpenPlayerTab(open_player_tab);
+        open_player_tab = -1;
+    }
     connect(&configure_dialog, &ConfigureDialog::LanguageChanged, this,
             &MainWindow::OnLanguageChanged);
     connect(&configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,

@@ -636,6 +636,8 @@ private:
     std::set<u32> overlay_active_pads;
     /// Polls controller input faster than the assignment tick, for the blue highlight
     QTimer console_activity_timer;
+    /// The player whose tab the next settings dialog opens on (-1: as usual)
+    int open_player_tab = -1;
     /// Under gamescope, makes a window fill the screen (see the definition)
     void FitToScreenUnderGamescope(QWidget* window);
     void RenderControllerOverlay();
