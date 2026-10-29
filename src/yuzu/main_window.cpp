@@ -84,8 +84,11 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFile>
+#include <atomic>
+#include <thread>
 #ifdef __linux__
 #include <fcntl.h>
+#include <linux/hidraw.h>
 #include <linux/input.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -2203,6 +2206,45 @@ bool PadHasGyro(SDL_JoystickID id) {
     return gyro;
 }
 
+/// True while a pad's accelerometer reads nothing at all: with its motion sensors on, gravity
+/// always registers
+bool PadMotionSilent(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Gamepad* pad = SDL_OpenGamepad(id);
+    if (!pad) {
+        return false;
+    }
+    std::array<float, 3> accel{};
+    const bool read = SDL_GetGamepadSensorData(pad, SDL_SENSOR_ACCEL, accel.data(), 3);
+    SDL_CloseGamepad(pad);
+    return read && accel[0] == 0.0f && accel[1] == 0.0f && accel[2] == 0.0f;
+}
+
+/// Asks the Steam Deck's own controller to report its motion sensors: Steam Input keeps them off
+/// unless its layout uses the gyro. Only that setting (IMU mode 0x30 = raw accel and gyro, 0x18)
+/// in the settings feature report (0x87), as SDL sends it; on a thread of its own, so a slow
+/// controller never stalls Eden.
+void EnableDeckMotion(const QString& path) {
+#ifdef __linux__
+    static std::atomic<bool> busy{false};
+    if (!path.startsWith(QStringLiteral("/dev/hidraw")) || busy.exchange(true)) {
+        return;
+    }
+    std::thread([node = path.toStdString()] {
+        const int fd = ::open(node.c_str(), O_RDWR | O_CLOEXEC);
+        if (fd >= 0) {
+            std::array<unsigned char, 65> report{0x00, 0x87, 0x03, 0x30, 0x18, 0x00};
+            if (ioctl(fd, HIDIOCSFEATURE(report.size()), report.data()) < 0 &&
+                Settings::values.console_debug_probes.GetValue()) {
+                LOG_WARNING(Frontend, "console-mode: deck motion request failed on {}", node);
+            }
+            ::close(fd);
+        }
+        busy = false;
+    }).detach();
+#endif
+}
+
 /// A pad's USB product id, under the same lock as the rest of the API use.
 Uint16 PadProduct(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -3845,6 +3887,27 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
         SDL_free(ids);
         std::erase_if(first_seen, [&present](const auto& e) { return !present.contains(e.first); });
+    }
+
+    // The deck's own controller only reports motion while its motion sensors are on, which Steam
+    // Input leaves off unless its layout uses the gyro: when its motion goes silent, ask for it
+    // again (at most every 2 seconds)
+    {
+        const auto deck = std::find_if(motion_devices.begin(), motion_devices.end(), [](u32 id) {
+            return SDL_GetJoystickVendorForID(id) == 0x28DE &&
+                   SDL_GetJoystickProductForID(id) == 0x1205;
+        });
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        if (deck != motion_devices.end() && now_ms - deck_motion_asked_at >= 2000 &&
+            PadMotionSilent(*deck)) {
+            deck_motion_asked_at = now_ms;
+            const QString path = PadPath(*deck);
+            EnableDeckMotion(path);
+            if (Settings::values.console_debug_probes.GetValue()) {
+                LOG_INFO(Frontend, "console-mode: deck motion silent, asked for it via {}",
+                         path.toStdString());
+            }
+        }
     }
 
     // A controller Steam moved to another virtual pad takes its slot and its handheld latch

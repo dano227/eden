@@ -577,6 +577,8 @@ private:
     /// connection instance -> player slot; entries survive a disconnect so the pad
     /// reclaims its own player when it returns
     std::map<u32, int> pad_slots;
+    /// When the deck's controller was last asked to turn its motion sensors back on
+    qint64 deck_motion_asked_at = 0;
     /// Pads whose player was removed: they sit out until they reconnect (connection instance)
     std::set<u32> benched_pads;
     /// When each player was last removed, and whether its controller was turned off
