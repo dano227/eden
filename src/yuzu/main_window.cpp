@@ -3947,6 +3947,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 }
                 // Sent twice: a single request through Steam's virtual pads is sometimes lost
                 const u32 pad = id;
+                LOG_INFO(Frontend, "console-mode: rumble P{} inst={}", player + 1, pad);
                 PadRumble(pad, 0xC000, 300);
                 QTimer::singleShot(150, this, [pad] { PadRumble(pad, 0xC000, 200); });
                 break;
