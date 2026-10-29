@@ -80,7 +80,7 @@ private:
 
     /// The handler (Manual, Modern Console). Under Manual, the controller applet a game sees
     /// (Disabled, Custom Frontend, Real Hardware); under Modern Console, whether this is a
-    /// handheld with built-in controls (Docked Handheld).
+    /// handheld with built-in controls (Handheld Console).
     enum Handler { HandlerManual, HandlerModern };
     QButtonGroup* handler_group = nullptr;
     QFrame* manual_panel = nullptr;

@@ -47,16 +47,6 @@
 #include "yuzu/configuration/input_profiles.h"
 
 namespace {
-
-bool RunningUnderSteam() {
-    return std::getenv("SteamGameId") != nullptr || std::getenv("SteamAppId") != nullptr;
-}
-
-/// As the engine has it: Steam Input's virtual pads are the players (not bypassed)
-bool LaunchedThroughSteam() {
-    return RunningUnderSteam() && !Common::GetControllerConsoleState().steam_bypassed;
-}
-
 bool IsAutomatic(Settings::AppletMode mode) {
     return mode == Settings::AppletMode::ConsoleMode ||
            mode == Settings::AppletMode::HandheldConsoleMode;
@@ -464,7 +454,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     manual_indent->addWidget(manual_panel);
     mode_layout->addLayout(manual_indent);
 
-    // Under Modern Console: whether this is a handheld with its own controls (Docked Handheld)
+    // Under Modern Console: whether this is a handheld with its own controls
     handheld_panel = new QFrame(mode_box);
     handheld_panel->setObjectName(QStringLiteral("handheldPanel"));
     handheld_panel->setStyleSheet(
@@ -717,7 +707,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
                                   tr("Writes detailed controller traces to the log several times "
                                      "a second, for bug reports. Connected controllers are "
                                      "always described in the log."));
-    original_probes = Settings::values.console_debug_probes.GetValue();
+    original_probes = Common::ControllerProbes();
     probes_toggle->setChecked(original_probes);
     connect(probes_toggle, &QAbstractButton::toggled, this,
             [](bool on) { Settings::values.console_debug_probes.SetValue(on); });
@@ -827,7 +817,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     handheld_panel->setVisible(handler_group->checkedId() == HandlerModern);
     // (Bypass Steam Input: only under Steam; applies to a Modern Console start)
-    steam_panel->setVisible(handler_group->checkedId() == HandlerModern && RunningUnderSteam());
+    steam_panel->setVisible(handler_group->checkedId() == HandlerModern && Common::RunningUnderSteam());
     steam_restart->setVisible(steam_switch->isChecked() !=
                               Common::GetControllerConsoleState().steam_bypassed);
     manual_panel->setVisible(handler_group->checkedId() == HandlerManual);
@@ -918,7 +908,7 @@ void ConfigurePlayerAssignment::RefreshBuiltin() {
 
     // What is stored for the way Eden was launched: the Steam handle under Steam, the raw
     // pad's identity otherwise (each launch kind keeps its own)
-    const bool steam = LaunchedThroughSteam();
+    const bool steam = Common::SteamPadsInUse();
     const QString identity =
         QString::fromStdString(Settings::values.builtin_pad_identity.GetValue());
     const QString handle =

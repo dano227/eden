@@ -581,9 +581,8 @@ private:
     qint64 deck_motion_asked_at = 0;
     /// Pads whose player was removed: they sit out until they reconnect (connection instance)
     std::set<u32> benched_pads;
-    /// When each player was last removed, and whether its controller was turned off
-    std::array<qint64, 10> removed_at{};
-    std::array<bool, 10> removed_off{};
+    /// When each player's controller was last turned off (Turn Off)
+    std::array<qint64, 10> turned_off_at{};
     /// Each live pad's Bluetooth address ("" when it is not on Bluetooth or unknown), and the
     /// pads that may be on Bluetooth but can't be told apart from others of their model yet
     /// (By the controller: its Steam handle under Steam, see BluetoothKey)
@@ -697,8 +696,8 @@ private:
         int player;
         bool joined;
         qint64 at;
-        /// Left because it was removed (1), or removed and turned off (2)
-        int removed = 0;
+        /// Left because Turn Off turned its controller off
+        bool turned_off = false;
     };
     std::vector<ControllerHint> controller_hints;
     /// The flashes already turned into hints, per player (green, red)

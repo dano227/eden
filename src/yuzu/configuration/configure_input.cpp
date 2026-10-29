@@ -168,7 +168,7 @@ void ConfigureInput::Initialize(InputCommon::InputSubsystem* input_subsystem,
     connect(player_controllers[0], &ConfigureInputPlayer::HandheldStateChanged,
             [this](bool is_handheld) { UpdateDockedState(is_handheld); });
 
-    // The Players tab comes first: how players are assigned, and who is which player now
+    // The Controllers tab comes first: how players are assigned, and who is which player now
     assignment = new ConfigurePlayerAssignment(this);
     assignment->setAccessibleName(tr("Controllers"));
     assignment->SetOpenPlayerTab([this](int player) {

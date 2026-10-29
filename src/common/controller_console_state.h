@@ -5,15 +5,18 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "common/settings.h"
+
 namespace Common {
 
 /// The state shared between the console-mode engine (in the main window, ticking at
-/// 250ms) and its settings UI (the Players tab in Controls): which pads are live, which
+/// 250ms) and its settings UI (the Controllers tab in Controls): which pads are live, which
 /// one is the handheld's own, the assigned players, the "identify" handshake and swap
 /// requests. The UI reads and declares; the engine observes and obeys.
 struct ControllerConsoleState {
@@ -24,7 +27,7 @@ struct ControllerConsoleState {
     bool identify_armed = false;
     std::chrono::steady_clock::time_point identify_armed_at{};
 
-    /// One assigned player, as the Players tab lists it
+    /// One assigned player, as the Controllers tab lists it
     struct PlayerRow {
         int player; ///< 0-based player index
         std::string name;
@@ -48,7 +51,8 @@ struct ControllerConsoleState {
     bool builtin_remove_request = false;
     /// The removed controller auto-detect leaves alone, by name ("" when not connected)
     std::string handheld_blocked_name;
-    /// Swaps requested by the Players tab, as (player a, player b); the engine applies them
+    /// Swaps requested from the settings and the overlay, as (player a, player b); the engine
+    /// applies them
     /// on its next tick, for this session only (the saved controller setup is untouched)
     std::vector<std::pair<int, int>> swap_requests;
     /// Players whose Bluetooth controller is to be turned off (disconnected): it sits out until
@@ -76,6 +80,26 @@ struct ControllerConsoleState {
 [[nodiscard]] inline ControllerConsoleState& GetControllerConsoleState() {
     static ControllerConsoleState instance;
     return instance;
+}
+
+/// True when Eden was launched through Steam: Steam Input then wraps the controllers in
+/// virtual ones
+[[nodiscard]] inline bool RunningUnderSteam() {
+    static const bool launched =
+        std::getenv("SteamGameId") != nullptr || std::getenv("SteamAppId") != nullptr;
+    return launched;
+}
+
+/// True when Steam Input's virtual pads are the players: under Steam, without Bypass Steam
+/// Input. Otherwise (a direct launch, or bypassed) the real controllers are, and everything
+/// works as launched outside Steam.
+[[nodiscard]] inline bool SteamPadsInUse() {
+    return RunningUnderSteam() && !GetControllerConsoleState().steam_bypassed;
+}
+
+/// Debug Probes: detailed controller traces in the log, for bug reports
+[[nodiscard]] inline bool ControllerProbes() {
+    return Settings::values.console_debug_probes.GetValue();
 }
 
 } // namespace Common
