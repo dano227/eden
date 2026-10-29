@@ -64,9 +64,6 @@ struct ControllerConsoleState {
         bool restore = false;
     };
     std::vector<ProfileRequest> profile_requests;
-    /// Whether SDL opened the real controllers behind Steam Input at startup (Motion from Real
-    /// Controllers): a change takes effect after a restart
-    bool real_motion_active = false;
     /// Bumped whenever the engine reloads the emulated controllers (a swap, a pad arriving or
     /// leaving): the Controls page refreshes its player tabs from them when it changes
     unsigned long long generation = 0;

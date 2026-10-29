@@ -665,25 +665,10 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
             [](bool shown) { Settings::values.console_hints.SetValue(shown); });
     layout->addWidget(display);
 
-    // Logging for bug reports, and the real controllers behind Steam Input
+    // Logging for bug reports
     auto* debug = new QGroupBox(tr("Troubleshooting"), this);
     debug_box = debug;
     auto* debug_layout = new QVBoxLayout(debug);
-    real_motion_toggle = add_switch_to(
-        debug_layout, tr("Motion from Real Controllers"),
-        tr("Launched through Steam: also reads the motion sensors of the controllers Steam Input "
-           "wraps (Steam's own pads have none). Turn off if a controller misbehaves under Steam. "
-           "Takes effect after restarting Eden, as does switching here from Manual."));
-    original_real_motion = Settings::values.console_real_motion.GetValue();
-    real_motion_toggle->setChecked(original_real_motion);
-    // Said when the choice differs from what Eden started with
-    real_motion_restart = new QLabel(tr("Restart Eden for this to take effect."), debug);
-    real_motion_restart->setObjectName(QStringLiteral("note"));
-    debug_layout->addWidget(real_motion_restart);
-    connect(real_motion_toggle, &QAbstractButton::toggled, this, [this](bool on) {
-        Settings::values.console_real_motion.SetValue(on);
-        UpdateModeUi();
-    });
     probes_toggle = add_switch_to(debug_layout, tr("Debug Probes"),
                                   tr("Writes detailed controller traces to the log several times "
                                      "a second, for bug reports. Connected controllers are "
@@ -754,7 +739,6 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
         Settings::values.console_history_seconds.SetValue(original_history_seconds);
         Settings::values.console_history_gaps.SetValue(original_history_gaps);
         Settings::values.console_debug_probes.SetValue(original_probes);
-        Settings::values.console_real_motion.SetValue(original_real_motion);
     }
 }
 
@@ -826,15 +810,6 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     now_box->setVisible(automatic);
     display_box->setVisible(automatic);
     about_box->setVisible(automatic);
-    // Motion from Real Controllers applies at startup, and only through Steam
-    bool real_motion_active = false;
-    {
-        auto& state = Common::GetControllerConsoleState();
-        std::scoped_lock lock{state.mutex};
-        real_motion_active = state.real_motion_active;
-    }
-    real_motion_restart->setVisible(LaunchedThroughSteam() && automatic &&
-                                    real_motion_toggle->isChecked() != real_motion_active);
     debug_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
     Refresh();

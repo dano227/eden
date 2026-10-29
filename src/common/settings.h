@@ -223,10 +223,6 @@ struct Values {
         linkage, 5, 1, 30, "console_history_seconds", Category::LibraryApplet};
     SwitchableSetting<bool> console_history_gaps{linkage, false, "console_history_gaps",
                                                  Category::LibraryApplet};
-    /// Launched through Steam in Modern Console: also open the real controllers Steam Input wraps,
-    /// for their motion sensors (Steam's virtual pads have none). Read at startup.
-    SwitchableSetting<bool> console_real_motion{linkage, true, "console_real_motion",
-                                                Category::LibraryApplet};
     /// Detailed controller traces in the log (every assignment tick), for bug reports. The
     /// devices are described either way (what adding a handheld to the allowlist needs).
     SwitchableSetting<bool> console_debug_probes{linkage, false, "console_debug_probes",
