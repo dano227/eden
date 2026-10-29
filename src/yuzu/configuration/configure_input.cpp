@@ -827,10 +827,11 @@ bool ConfigureInput::DragPlayerTab(QEvent* event) {
     };
     if (type == QEvent::MouseButtonPress) {
         const int index = bar->tabAt(at);
-        own_drag_index = mouse->button() == Qt::LeftButton && index >= 0 &&
-                                 bar->tabData(index).metaType() == QMetaType::fromType<QColor>()
-                             ? index
-                             : -1;
+        // (Player tabs carry their look: colour and lit state)
+        own_drag_index =
+            mouse->button() == Qt::LeftButton && index >= 0 && TabLook(bar->tabData(index))
+                ? index
+                : -1;
         own_drag_press_x = at.x();
         own_dragging = false;
         return false; // the tab bar still selects the tab
