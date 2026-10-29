@@ -2242,6 +2242,76 @@ void EnableDeckMotion(const QString& path) {
 #endif
 }
 
+/// The controller applet modes, as the log names them
+const char* AppletModeName(Settings::AppletMode mode) {
+    switch (mode) {
+    case Settings::AppletMode::HLE:
+        return "Custom Frontend";
+    case Settings::AppletMode::LLE:
+        return "Real Hardware";
+    case Settings::AppletMode::Disabled:
+        return "Disabled";
+    case Settings::AppletMode::ConsoleMode:
+        return "Modern Console";
+    case Settings::AppletMode::HandheldConsoleMode:
+        return "Handheld Console";
+    default:
+        return "unknown";
+    }
+}
+
+/// A controller type, as the log names it
+const char* StyleName(Core::HID::NpadStyleIndex style) {
+    using Core::HID::NpadStyleIndex;
+    switch (style) {
+    case NpadStyleIndex::Fullkey:
+        return "Pro Controller";
+    case NpadStyleIndex::Handheld:
+        return "Handheld";
+    case NpadStyleIndex::JoyconDual:
+        return "Dual Joycons";
+    case NpadStyleIndex::JoyconLeft:
+        return "Left Joycon";
+    case NpadStyleIndex::JoyconRight:
+        return "Right Joycon";
+    case NpadStyleIndex::GameCube:
+        return "GameCube";
+    default:
+        return "other";
+    }
+}
+
+/// Whether a game's supported controller types include one (as hid_core decides it)
+bool StyleSupported(Core::HID::NpadStyleIndex style, const Core::HID::NpadStyleTag& tag) {
+    using Core::HID::NpadStyleIndex;
+    switch (style) {
+    case NpadStyleIndex::Fullkey:
+        return tag.fullkey;
+    case NpadStyleIndex::Handheld:
+        return tag.handheld;
+    case NpadStyleIndex::JoyconDual:
+        return tag.joycon_dual;
+    case NpadStyleIndex::JoyconLeft:
+        return tag.joycon_left;
+    case NpadStyleIndex::JoyconRight:
+        return tag.joycon_right;
+    case NpadStyleIndex::GameCube:
+        return tag.gamecube;
+    case NpadStyleIndex::Pokeball:
+        return tag.palma;
+    case NpadStyleIndex::NES:
+        return tag.lark;
+    case NpadStyleIndex::SNES:
+        return tag.lucia;
+    case NpadStyleIndex::N64:
+        return tag.lagoon;
+    case NpadStyleIndex::SegaGenesis:
+        return tag.lager;
+    default:
+        return false;
+    }
+}
+
 /// A pad's USB product id, under the same lock as the rest of the API use.
 Uint16 PadProduct(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -2917,12 +2987,21 @@ void MainWindow::RenderControllerOverlay() {
         if (row.flash == 1 && row.pad != 0 && row.flash_since > hinted_join[i]) {
             hinted_join[i] = row.flash_since;
             controller_hints.push_back({overlay_row_name[i], i, true, row.flash_since});
+            if (Common::ControllerProbes()) {
+                LOG_INFO(Frontend, "console-mode: hint \"{} joined\" P{}",
+                         overlay_row_name[i].toStdString(), i + 1);
+            }
         } else if (row.flash == 2 && row.flash_since > hinted_leave[i]) {
             hinted_leave[i] = row.flash_since;
             // (Removed on the tick it left)
             const bool turned_off = std::abs(row.flash_since - turned_off_at[i]) < 1000;
             controller_hints.push_back(
                 {overlay_row_name[i], i, false, row.flash_since, turned_off});
+            if (Common::ControllerProbes()) {
+                LOG_INFO(Frontend, "console-mode: hint \"{} {}\" P{}",
+                         overlay_row_name[i].toStdString(), turned_off ? "turned off" : "left",
+                         i + 1);
+            }
         }
     }
     std::erase_if(controller_hints,
@@ -3775,9 +3854,43 @@ bool MainWindow::PollButtonHistory() {
 }
 
 void MainWindow::ApplyConsoleControllerMode() {
+    // A check that takes longer than its own 250ms is a controller or the system holding Eden
+    // up (a USB device that stopped answering froze it for seconds once): always logged
+    struct SlowCheckWarning {
+        std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        ~SlowCheckWarning() {
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - start)
+                                .count();
+            if (ms > 250) {
+                LOG_WARNING(Frontend, "console-mode: controller check took {} ms", ms);
+            }
+        }
+    } slow_check_warning;
     const auto mode = Settings::values.controller_applet_mode.GetValue();
     const bool handheld = mode == Settings::AppletMode::HandheldConsoleMode;
     const bool console = mode == Settings::AppletMode::ConsoleMode;
+    // The mode, when it changes (from the Controllers tab or System > Applets): always logged
+    if (mode != logged_mode) {
+        LOG_INFO(Frontend, "console-mode: mode {} -> {}",
+                 logged_mode ? AppletModeName(*logged_mode) : "(start)", AppletModeName(mode));
+        logged_mode = mode;
+        // Debug Probes: what every report needs, once per mode
+        if (Common::ControllerProbes()) {
+            LOG_INFO(Frontend,
+                     "console-mode: setup steam={} bypass={} overlay={} hints={} history={} "
+                     "inputs={} expire={}s gaps={} seat_profiles=\"{}\"",
+                     Common::RunningUnderSteam(),
+                     Common::GetControllerConsoleState().steam_bypassed.load(),
+                     Settings::values.console_debug_overlay.GetValue(),
+                     Settings::values.console_hints.GetValue(),
+                     Settings::values.console_history.GetValue(),
+                     Settings::values.console_history_size.GetValue(),
+                     Settings::values.console_history_seconds.GetValue(),
+                     Settings::values.console_history_gaps.GetValue(),
+                     Settings::values.modern_seat_profiles.GetValue());
+        }
+    }
     // The handheld's own pad is stored once per way of launching, since the pads differ
     // completely: under Steam it is the Steam handle (builtin_pad_steam_handle), launched
     // directly it is the raw pad's identity (builtin_pad_identity, with builtin_pad_manual
@@ -5052,6 +5165,39 @@ void MainWindow::ApplyConsoleControllerMode() {
                           "console-mode: INVARIANT BROKEN inst={} slot={} in_range={} "
                           "unique={} - two pads fighting over one player or a corrupt slot",
                           id, slot, in_range, unique);
+            }
+        }
+    }
+
+    // A player the game doesn't take: its controller type is not among the ones the game
+    // supports (a classic "the controller does nothing"). Always logged, once per change.
+    if (QtCommon::system && QtCommon::system->IsPoweredOn()) {
+        auto& hid = QtCommon::system->HIDCore();
+        const auto supported = hid.GetSupportedStyleTag();
+        for (int i = 0; i < static_cast<int>(players.size()) && i < 8; ++i) {
+            // (A handheld P1 is the handheld's own controller, as the game sees it)
+            const auto* controller =
+                i == 0 && players[0].controller_type == Settings::ControllerType::Handheld
+                    ? hid.GetEmulatedController(Core::HID::NpadIdType::Handheld)
+                    : hid.GetEmulatedControllerByIndex(static_cast<std::size_t>(i));
+            if (!controller || !players[i].connected) {
+                refused_logged[static_cast<std::size_t>(i)].clear();
+                continue;
+            }
+            const auto style = controller->GetNpadStyleIndex();
+            const bool taken = StyleSupported(style, supported);
+            const std::string what = taken ? std::string{}
+                                           : fmt::format("{}/{:#x}", static_cast<int>(style),
+                                                         static_cast<u32>(supported.raw));
+            auto& logged = refused_logged[static_cast<std::size_t>(i)];
+            if (what != logged) {
+                if (!taken) {
+                    LOG_WARNING(Frontend,
+                                "console-mode: P{} is a {} controller, which the game doesn't "
+                                "support (supported styles {:#x})",
+                                i + 1, StyleName(style), static_cast<u32>(supported.raw));
+                }
+                logged = what;
             }
         }
     }
@@ -8367,6 +8513,19 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     if (!ConfirmClose()) {
         event->ignore();
         return;
+    }
+    // Debug Probes: who was which player when Eden closed
+    if (Common::ControllerProbes() && !overlay_rows.empty()) {
+        std::string players_now;
+        for (const auto& row : overlay_rows) {
+            players_now += fmt::format("\n  P{} {} ident={} profile=\"{}\"{}", row.player + 1,
+                                       overlay_row_name[row.player].toStdString(),
+                                       overlay_row_ident[row.player],
+                                       ConsoleBindingSets()[slot_set[row.player]].profile_name,
+                                       row.pad == 0 ? " (left)" : "");
+        }
+        LOG_INFO(Frontend, "console-mode: closing, mode {}, players:{}",
+                 AppletModeName(Settings::values.controller_applet_mode.GetValue()), players_now);
     }
 
     UpdateUISettings();

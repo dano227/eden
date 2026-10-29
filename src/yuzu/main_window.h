@@ -577,6 +577,10 @@ private:
     /// connection instance -> player slot; entries survive a disconnect so the pad
     /// reclaims its own player when it returns
     std::map<u32, int> pad_slots;
+    /// The mode last logged (a change is logged), and each player's refused controller type
+    /// as last logged
+    std::optional<Settings::AppletMode> logged_mode;
+    std::array<std::string, 8> refused_logged{};
     /// When the deck's controller was last asked to turn its motion sensors back on
     qint64 deck_motion_asked_at = 0;
     /// Pads whose player was removed: they sit out until they reconnect (connection instance)
