@@ -74,14 +74,15 @@ private:
     void RequestSwap(int a, int b);
     void RequestRumble(int player);
 
-    /// The handler (Manual, Modern Console, Real Hardware) and, under Modern Console, whether
-    /// this is a handheld with built-in controls (Docked Handheld). Legacy Applet has no button
-    /// for now; a setting already on it is kept until another pick.
-    enum Handler { HandlerManual, HandlerModern, HandlerReal };
+    /// The handler (Manual, Modern Console). Under Manual, the controller applet a game sees
+    /// (Disabled, Custom Frontend, Real Hardware); under Modern Console, whether this is a
+    /// handheld with built-in controls (Docked Handheld).
+    enum Handler { HandlerManual, HandlerModern };
     QButtonGroup* handler_group = nullptr;
+    QFrame* manual_panel = nullptr;
+    QButtonGroup* manual_group = nullptr;
     QFrame* handheld_panel = nullptr;
     QAbstractButton* handheld_switch = nullptr;
-    bool legacy_applet = false;
     QLabel* mode_info = nullptr;
     QWidget* display_box = nullptr;
     /// The scrolled page the cards stack in

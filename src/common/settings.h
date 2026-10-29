@@ -140,7 +140,7 @@ struct Values {
     // Applet
     SwitchableSetting<AppletMode> cabinet_applet_mode{linkage, AppletMode::LLE, "cabinet_applet_mode",
                                             Category::LibraryApplet};
-    SwitchableSetting<AppletMode> controller_applet_mode{linkage, AppletMode::Disabled, "controller_applet_mode",
+    SwitchableSetting<AppletMode> controller_applet_mode{linkage, AppletMode::HLE, "controller_applet_mode",
                                                Category::LibraryApplet};
     Setting<AppletMode> data_erase_applet_mode{linkage, AppletMode::HLE, "data_erase_applet_mode",
                                                Category::LibraryApplet};

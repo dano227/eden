@@ -335,11 +335,45 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* mode_layout = new QVBoxLayout(mode_box);
     handler_group = new QButtonGroup(this);
     auto* handler_row = new QHBoxLayout();
-    handler_row->addWidget(MakeSegmented(mode_box,
-                                     {tr("Manual"), tr("Real Hardware"), tr("Modern Console")},
-                                     {HandlerManual, HandlerReal, HandlerModern}, handler_group));
+    handler_row->addWidget(MakeSegmented(mode_box, {tr("Manual"), tr("Modern Console")},
+                                         {HandlerManual, HandlerModern}, handler_group));
     handler_row->addStretch(1);
     mode_layout->addLayout(handler_row);
+
+    // Under Manual: the controller applet a game sees when it asks for its players
+    manual_panel = new QFrame(mode_box);
+    manual_panel->setObjectName(QStringLiteral("manualPanel"));
+    manual_panel->setStyleSheet(
+        Themed(QStringLiteral("#manualPanel { border: 1px solid palette(mid); "
+                              "border-radius: 8px; background: palette(base); }")));
+    auto* manual_layout = new QVBoxLayout(manual_panel);
+    manual_layout->setContentsMargins(12, 8, 12, 8);
+    auto* manual_title = new QLabel(tr("Controller Applet"), manual_panel);
+    QFont manual_font = manual_title->font();
+    manual_font.setBold(true);
+    manual_title->setFont(manual_font);
+    auto* manual_note = new QLabel(tr("What a game sees when it asks for its players. These are "
+                                      "the legacy ways of handling controllers: they do not have "
+                                      "Modern Console's features, such as players assigned "
+                                      "automatically, the overlay and the hints."),
+                                   manual_panel);
+    manual_note->setWordWrap(true);
+    manual_note->setObjectName(QStringLiteral("note"));
+    manual_group = new QButtonGroup(this);
+    auto* manual_row = new QHBoxLayout();
+    manual_row->addWidget(MakeSegmented(
+        manual_panel, {tr("Disabled"), tr("Custom Frontend"), tr("Real Hardware")},
+        {static_cast<int>(Settings::AppletMode::Disabled), static_cast<int>(Settings::AppletMode::HLE),
+         static_cast<int>(Settings::AppletMode::LLE)},
+        manual_group));
+    manual_row->addStretch(1);
+    manual_layout->addWidget(manual_title);
+    manual_layout->addWidget(manual_note);
+    manual_layout->addLayout(manual_row);
+    auto* manual_indent = new QHBoxLayout();
+    manual_indent->setContentsMargins(16, 0, 0, 0);
+    manual_indent->addWidget(manual_panel);
+    mode_layout->addLayout(manual_indent);
 
     // Under Modern Console: whether this is a handheld with its own controls (Docked Handheld)
     handheld_panel = new QFrame(mode_box);
@@ -454,11 +488,10 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     // The mode applies at once, so the players switch while the dialog is open; closing it
     // without applying puts the previous mode back (see the destructor)
     original_mode = static_cast<int>(Settings::values.controller_applet_mode.GetValue());
-    connect(handler_group, &QButtonGroup::idClicked, this, [this] {
-        // Picking any handler leaves the hidden Legacy Applet
-        legacy_applet = false;
-        OnModeChanged();
-    });
+    connect(handler_group, &QButtonGroup::idClicked, this,
+            &ConfigurePlayerAssignment::OnModeChanged);
+    connect(manual_group, &QButtonGroup::idClicked, this,
+            &ConfigurePlayerAssignment::OnModeChanged);
     connect(handheld_switch, &QAbstractButton::clicked, this,
             &ConfigurePlayerAssignment::OnModeChanged);
     connect(builtin_picker, &QComboBox::currentIndexChanged, this,
@@ -486,16 +519,13 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
 
 void ConfigurePlayerAssignment::LoadConfiguration() {
     const auto current = Settings::values.controller_applet_mode.GetValue();
-    // Legacy Applet has no button for now: it shows as Manual and stays until another pick
-    legacy_applet = current == Settings::AppletMode::HLE;
-    int handler = HandlerManual;
-    if (current == Settings::AppletMode::ConsoleMode ||
-        current == Settings::AppletMode::HandheldConsoleMode) {
-        handler = HandlerModern;
-    } else if (current == Settings::AppletMode::LLE) {
-        handler = HandlerReal;
-    }
-    handler_group->button(handler)->setChecked(true);
+    const bool modern = IsAutomatic(current);
+    handler_group->button(modern ? HandlerModern : HandlerManual)->setChecked(true);
+    // Under Manual the applet as set; the default there is Custom Frontend
+    QAbstractButton* applet = manual_group->button(static_cast<int>(current));
+    (applet && !modern ? applet
+                       : manual_group->button(static_cast<int>(Settings::AppletMode::HLE)))
+        ->setChecked(true);
     handheld_switch->setChecked(current == Settings::AppletMode::HandheldConsoleMode);
     UpdateModeUi();
 }
@@ -506,11 +536,8 @@ int ConfigurePlayerAssignment::SelectedMode() const {
         return static_cast<int>(handheld_switch->isChecked()
                                     ? Settings::AppletMode::HandheldConsoleMode
                                     : Settings::AppletMode::ConsoleMode);
-    case HandlerReal:
-        return static_cast<int>(Settings::AppletMode::LLE);
     default:
-        return static_cast<int>(legacy_applet ? Settings::AppletMode::HLE
-                                              : Settings::AppletMode::Disabled);
+        return manual_group->checkedId();
     }
 }
 
@@ -529,6 +556,7 @@ void ConfigurePlayerAssignment::ApplyConfiguration() {
 void ConfigurePlayerAssignment::UpdateModeUi() {
     const auto selected = static_cast<Settings::AppletMode>(SelectedMode());
     handheld_panel->setVisible(handler_group->checkedId() == HandlerModern);
+    manual_panel->setVisible(handler_group->checkedId() == HandlerManual);
     // Only the automatic modes have live players to show
     const bool automatic = IsAutomatic(selected);
     switch (selected) {
