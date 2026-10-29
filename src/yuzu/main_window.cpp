@@ -3206,13 +3206,14 @@ void MainWindow::RenderControllerOverlay() {
         }
         // Config: the player's tab in the controls settings
         {
-            const QRectF config = add(config_w, 2, -1);
+            const QRectF config_rect = add(config_w, 2, -1);
             painter.setPen(QPen(QColor(120, 170, 255, 230), 1.5));
             painter.setBrush(QColor(45, 95, 200, 120));
-            painter.drawRoundedRect(config.adjusted(0.75, 0.75, -0.75, -0.75), h / 2.0, h / 2.0);
+            painter.drawRoundedRect(config_rect.adjusted(0.75, 0.75, -0.75, -0.75), h / 2.0,
+                                    h / 2.0);
             painter.setFont(chip_font);
             painter.setPen(Qt::white);
-            painter.drawText(config, Qt::AlignCenter, config_label);
+            painter.drawText(config_rect, Qt::AlignCenter, config_label);
             painter.setPen(Qt::NoPen);
         }
         if (!turns_off) {
@@ -3286,14 +3287,14 @@ void MainWindow::RenderControllerOverlay() {
                 --first;
             }
             const double scale = press_scale(presses[first]);
-            double width = 0;
+            double input_w = 0;
             for (std::size_t k = first; k < end; ++k) {
-                width += chip_width(chip(presses[k].button).first);
+                input_w += chip_width(chip(presses[k].button).first);
             }
             if (end - first > 1) {
-                width += capsule_pad * 2 + plus_w * static_cast<double>(end - first - 1);
+                input_w += capsule_pad * 2 + plus_w * static_cast<double>(end - first - 1);
             }
-            width *= scale;
+            input_w *= scale;
             if (scale > 0.0) {
                 // The time from this input to the newer one before it
                 double gap_w = 0;
@@ -3302,11 +3303,11 @@ void MainWindow::RenderControllerOverlay() {
                                 presses[inputs.back().first].at - presses[first].at)) +
                             gap_pad * 2;
                 }
-                if (chips_w + gap_w + width > history_room - inner * 2) {
+                if (chips_w + gap_w + input_w > history_room - inner * 2) {
                     break;
                 }
-                inputs.push_back({first, end - first, scale, width, gap_w});
-                chips_w += gap_w + width + chip_gap * scale;
+                inputs.push_back({first, end - first, scale, input_w, gap_w});
+                chips_w += gap_w + input_w + chip_gap * scale;
             }
             end = first;
         }
