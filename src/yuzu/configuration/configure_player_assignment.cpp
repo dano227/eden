@@ -200,8 +200,15 @@ private:
 
 QString ConfigurePlayerAssignment::Themed(QString style) {
     if (!UISettings::IsDarkTheme()) {
-        return style.replace(QStringLiteral("muted-text"), QStringLiteral("#7d838b"));
+        return style.replace(QStringLiteral("muted-text"), QStringLiteral("#7d838b"))
+            .replace(QStringLiteral("popup-base"), QStringLiteral("palette(base)"));
     }
+    // An open drop-down list is a window of its own, with nothing behind it: it takes the
+    // theme's background, solid (a tint there would show as white)
+    style.replace(QStringLiteral("popup-base"),
+                  QString::fromStdString(UISettings::values.theme).contains(QStringLiteral("midnight"))
+                      ? QStringLiteral("#19232D")
+                      : QStringLiteral("#31363B"));
     // Cards show the theme's own background (its widgets all paint it), fields and buttons a
     // light tint, and the accent is the dark theme's blue
     static const std::array<std::pair<const char*, const char*>, 8> dark{{
@@ -236,7 +243,7 @@ QString ConfigurePlayerAssignment::ModernComboStyle() {
         "QComboBox:hover, QComboBox:focus { border-color: palette(highlight); }"
         "QComboBox:disabled { color: palette(mid); }"
         // The open list: readable rows, the hovered one in the highlight colour
-        "QComboBox QAbstractItemView { background: palette(base); color: palette(text); "
+        "QComboBox QAbstractItemView { background: popup-base; color: palette(text); "
         "border: 1px solid palette(mid); outline: 0; padding: 2px; }"
         "QComboBox QAbstractItemView::item { min-height: 24px; padding: 0 8px; }"
         "QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected { "
