@@ -15,10 +15,10 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include "common/controller_console_state.h"
 #include "common/logging.h"
 #include "common/math_util.h"
 #include "common/param_package.h"
-#include "common/controller_console_state.h"
 #include "common/settings.h"
 #include "common/thread.h"
 #include "common/vector_math.h"
@@ -750,8 +750,8 @@ void LogMotionHardware() {
         }
         const fs::path device = fs::canonical(dir / "device", ignored);
         sensors += fmt::format("\n  {} name={} gyro={} accel={} mount=[{}] at={}",
-                               dir.filename().string(), read_line(dir / "name"), gyro, accel,
-                               mount, ignored ? std::string{"?"} : device.string());
+                               dir.filename().string(), read_line(dir / "name"), gyro, accel, mount,
+                               ignored ? std::string{"?"} : device.string());
     }
     LOG_INFO(Input, "Motion sensors of the system (IIO):{}",
              sensors.empty() ? std::string{" none"} : sensors);
@@ -784,8 +784,8 @@ void LogMotionHardware() {
 
 /// A controller Eden opened again under Steam Input for its motion alone
 bool IsUnhiddenController(SDL_Joystick* joystick) {
-    const u32 id = static_cast<u32>(SDL_GetJoystickVendor(joystick)) << 16 |
-                   SDL_GetJoystickProduct(joystick);
+    const u32 id =
+        static_cast<u32>(SDL_GetJoystickVendor(joystick)) << 16 | SDL_GetJoystickProduct(joystick);
     return UnhiddenControllers().contains(id);
 }
 

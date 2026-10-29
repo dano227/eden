@@ -9,20 +9,20 @@
 #include <memory>
 #include <optional>
 
-#include <filesystem>
-#include <QMainWindow>
-#include <QMessageBox>
-#include <QPushButton>
-#include <QTimer>
 #include <array>
 #include <bitset>
 #include <chrono>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
+#include <QMainWindow>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QTimer>
 #include <QTranslator>
 #include <qaction.h>
 
