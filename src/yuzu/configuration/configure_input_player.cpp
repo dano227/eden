@@ -1051,6 +1051,11 @@ void ConfigureInputPlayer::SetConnectionLocked(bool locked) {
                 ui->miscButtons->setStretch(0, 1);
                 ui->miscButtons->addStretch(1);
             }
+            // Connect Controller's drop-down sits at the top of its box, level with the Mapping
+            // Profile card's (which has its status line below)
+            if (QLayout* connect = ui->groupConnectedController->layout()) {
+                connect->setAlignment(ui->comboControllerType, Qt::AlignTop);
+            }
             // L, R, Minus and Plus line up with ZL and ZR, whose buttons sit at the top (their
             // trigger slider is below)
             for (QPushButton* button : {ui->buttonL, ui->buttonR, ui->buttonMinus,
@@ -1161,50 +1166,39 @@ void ConfigureInputPlayer::BuildProfileCard() {
     card_save = new QPushButton(tr("Save"), profile_card);
     card_save->setDefault(false);
     card_save->setAutoDefault(false);
-    card_more = new QToolButton(profile_card);
-    card_more->setText(QStringLiteral("\u22ef"));
-    card_more->setToolTip(tr("More profile actions"));
-    card_more->setPopupMode(QToolButton::InstantPopup);
-    // A plain button the size of Save, without the arrow a menu button gets
-    card_more->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; }"));
-    card_more->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
+    // The profile's actions, all in view beside Save (Defaults, below the drawing, resets)
+    const auto action = [this](const QString& text, const QString& tip) {
+        auto* button = new QPushButton(text, profile_card);
+        button->setAutoDefault(false);
+        button->setToolTip(tip);
+        return button;
+    };
+    card_save_new = action(tr("Save as New"), tr("Keep this mapping as a new profile"));
+    card_rename = action(tr("Rename"), tr("Rename the selected profile"));
+    card_duplicate = action(tr("Duplicate"), tr("Copy the selected profile under a new name"));
+    card_delete = action(tr("Delete"), tr("Delete the selected profile; this player keeps its "
+                                          "current mapping"));
     // Takes the profile off this player: its mappings from before the profile come back
     card_remove = new QToolButton(profile_card);
     card_remove->setText(QStringLiteral("\u2715"));
     card_remove->setToolTip(tr("Remove the profile from this player"));
     card_remove->setMinimumSize(card_save->sizeHint().height(), card_save->sizeHint().height());
-    // One row, like Connect Controller beside it: the drop-downs line up
     row->addWidget(card_profiles);
     row->addWidget(card_remove);
     row->addWidget(card_save);
-    row->addWidget(card_more);
+    row->addWidget(card_save_new);
+    row->addWidget(card_rename);
+    row->addWidget(card_duplicate);
+    row->addWidget(card_delete);
+    row->addStretch(1);
+    column->addLayout(row);
     card_status = new QLabel(profile_card);
     card_status->setWordWrap(true);
-    row->addSpacing(8);
-    row->addWidget(card_status, 1);
-    column->addLayout(row);
-    // No taller than its row: the drawing below gets the height
+    column->addWidget(card_status);
+    // No taller than its rows: the drawing below gets the height
     profile_card->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 
-    auto* menu = new QMenu(card_more);
-    auto* save_new = menu->addAction(tr("Save as new..."));
-    auto* rename = menu->addAction(tr("Rename..."));
-    auto* duplicate = menu->addAction(tr("Duplicate"));
-    menu->addSeparator();
-    auto* reset = menu->addAction(tr("Reset to default mapping"));
-    auto* remove = menu->addAction(tr("Delete"));
-    card_more->setMenu(menu);
-    connect(menu, &QMenu::aboutToShow, this, [this, rename, duplicate, reset, remove] {
-        const bool selected = ui->comboProfiles->currentIndex() >= 0;
-        rename->setEnabled(selected);
-        duplicate->setEnabled(selected);
-        remove->setEnabled(selected);
-        remove->setText(selected ? tr("Delete \u201c%1\u201d").arg(ui->comboProfiles->currentText())
-                                 : tr("Delete"));
-        // The defaults are the controller's own: there is none to take them from on "Any"
-        reset->setEnabled(ui->comboDevices->currentIndex() != 0);
-    });
-    connect(save_new, &QAction::triggered, this, [this] {
+    connect(card_save_new, &QPushButton::clicked, this, [this] {
         const int count = ui->comboProfiles->count();
         CreateProfile();
         if (ui->comboProfiles->count() > count) {
@@ -1213,13 +1207,9 @@ void ConfigureInputPlayer::BuildProfileCard() {
         RememberProfileMapping();
         UpdateProfileCard();
     });
-    connect(rename, &QAction::triggered, this, &ConfigureInputPlayer::RenameProfile);
-    connect(duplicate, &QAction::triggered, this, &ConfigureInputPlayer::DuplicateProfile);
-    connect(reset, &QAction::triggered, this, [this] {
-        RestoreDefaults();
-        UpdateProfileCard();
-    });
-    connect(remove, &QAction::triggered, this, &ConfigureInputPlayer::DeleteProfileAsked);
+    connect(card_rename, &QPushButton::clicked, this, &ConfigureInputPlayer::RenameProfile);
+    connect(card_duplicate, &QPushButton::clicked, this, &ConfigureInputPlayer::DuplicateProfile);
+    connect(card_delete, &QPushButton::clicked, this, &ConfigureInputPlayer::DeleteProfileAsked);
 
     // The engine owns the mappings here: picking or saving a profile goes through it, or its
     // next pass would put the player's previous mappings back
@@ -1303,15 +1293,17 @@ void ConfigureInputPlayer::UpdateProfileCard() {
     }
 
     const QString follows = tr("Applies to this player's controller, whichever one it is.");
-    card_remove->setVisible(ui->comboProfiles->currentIndex() >= 0);
+    const bool selected = ui->comboProfiles->currentIndex() >= 0;
+    card_remove->setVisible(selected);
+    card_rename->setEnabled(selected);
+    card_duplicate->setEnabled(selected);
+    card_delete->setEnabled(selected);
     if (ui->comboProfiles->currentIndex() < 0) {
-        card_save->setText(tr("Save..."));
-        card_save->setToolTip(tr("Keep this mapping as a new profile"));
+        card_save->setToolTip(tr("Keep this mapping as a new profile (asks for its name)"));
         card_status->setText(tr("No profile selected. %1").arg(follows));
         card_status->setPalette(palette());
         return;
     }
-    card_save->setText(tr("Save"));
     card_save->setToolTip(tr("Save this mapping to \u201c%1\u201d").arg(name));
     QPalette status = palette();
     if (CurrentMappingKey() != card_profile_key) {

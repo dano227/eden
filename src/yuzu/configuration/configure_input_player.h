@@ -209,7 +209,10 @@ private:
     QComboBox* card_profiles{};
     QPushButton* card_save{};
     QToolButton* card_remove{};
-    QToolButton* card_more{};
+    QPushButton* card_save_new{};
+    QPushButton* card_rename{};
+    QPushButton* card_duplicate{};
+    QPushButton* card_delete{};
     QLabel* card_status{};
     QTimer* card_timer{};
     std::string card_profile_key;
