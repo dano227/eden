@@ -5232,9 +5232,20 @@ void MainWindow::ApplyConsoleControllerMode() {
             }
             const int slot = it->second;
             const bool is_builtin = builtin_valid && id == builtin_match_id;
+            // The set's key: a Bluetooth controller's address (its bindings and profile follow
+            // it through reconnects, Turn Off and corrected guesses: Steam's handles follow the
+            // connection order), else its identity. A set made before the address was known
+            // moves to it.
+            const auto address = inst_address.find(id);
+            const std::string set_key =
+                address != inst_address.end() ? "bt:" + address->second : ident;
+            if (set_key != ident && !pad_sets.contains(set_key) && pad_sets.contains(ident)) {
+                pad_sets[set_key] = pad_sets[ident];
+                pad_sets.erase(ident);
+            }
             // A controller carries the set it first got for the session: its slot's, unless
             // another controller has that one (after a swap), then the first set nobody has
-            if (!is_builtin && !pad_sets.contains(ident)) {
+            if (!is_builtin && !pad_sets.contains(set_key)) {
                 std::set<int> taken;
                 for (const auto& [other, set] : pad_sets) {
                     taken.insert(set);
@@ -5246,7 +5257,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 if (taken.contains(set)) {
                     set = slot;
                 }
-                pad_sets[ident] = set;
+                pad_sets[set_key] = set;
                 if (Common::ControllerProbes()) {
                     LOG_INFO(Frontend, "console-mode: inst={} carries the P{} set", id, set + 1);
                 }
@@ -5258,7 +5269,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                     return !b.empty() && Common::ParamPackage{b}.Get("engine", "") == "sdl";
                 });
             };
-            int set_index = is_builtin ? 0 : pad_sets[ident];
+            int set_index = is_builtin ? 0 : pad_sets[set_key];
             if (!is_builtin && !has_sdl(profile[set_index])) {
                 for (int k = set_index - 1; k >= 0; --k) {
                     if (has_sdl(profile[k]) && (k > 0 || !builtin_valid || !handheld)) {
