@@ -108,7 +108,7 @@ void TextureCache<P>::RunGarbageCollector() {
     const auto Configure = [&](bool allow_aggressive) {
         high_priority_mode = total_used_memory >= expected_memory;
         aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
-        // Sudachi's ladder: only genuinely idle images (120 ticks) when healthy, younger
+        // The ladder: only genuinely idle images (120 ticks) when healthy, younger
         // under pressure. The per-image protections hold until the critical level.
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 120ULL;
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
