@@ -5842,10 +5842,11 @@ void MainWindow::ApplyConsoleControllerMode() {
                 }
                 // (The name of the controller that had the player, should it have just left)
                 const QString previous = overlay_row_name[i];
-                // (A name given before the address was known moves to it, like the bindings)
+                // (A name given before the address was known moves to it, like the bindings,
+                // and wins over one kept from an earlier session: it is the newer)
                 if (const std::string key = name_key(pad); key.starts_with("bt:")) {
                     const auto earlier = controller_names.find("id:" + live[pad]);
-                    if (earlier != controller_names.end() && !controller_names.contains(key)) {
+                    if (earlier != controller_names.end()) {
                         controller_names[key] = earlier->second;
                         controller_names.erase(earlier);
                         WriteControllerNames(controller_names);
