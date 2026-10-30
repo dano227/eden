@@ -12,9 +12,10 @@
 class GRenderWindow;
 class QEvent;
 
-/// The running game's cheats drawn over the game (top right, a little lower), so they can be
-/// turned on and off also where no window shows over the game (Steam's Game Mode). Its menu
-/// button tucks it away against the screen's right edge. Drawn as an overlay panel.
+/// The running game's cheats drawn over the game (top right), so they can be
+/// turned on and off also where no window shows over the game (Steam's Game Mode). Its arrow
+/// button tucks it away against the screen's right edge, where its menu button brings it back.
+/// Drawn as an overlay panel.
 class CheatOverlay {
 public:
     struct Cheat {
@@ -38,6 +39,8 @@ public:
 
 private:
     void Render();
+    /// Moves the cheats in view by some rows (within the list)
+    void ScrollBy(int rows);
 
     std::function<void(int)> toggle_cheat;
     bool shown = false;
@@ -47,12 +50,15 @@ private:
     std::vector<Cheat> cheats;
     /// The first cheat in view, when there are more than fit
     int scroll = 0;
-    /// The cheat (or -2 the menu button) under the cursor, and the one pressed; -1 none
+    /// The cheat (or a button: menu, scroll up, scroll down) under the cursor, and the one
+    /// pressed; -1 none
     int hover = -1;
     int pressed = -1;
 
     /// Where things are in the drawn image, for the mouse
     QRect menu_rect;
+    QRect up_rect;
+    QRect down_rect;
     std::vector<std::pair<int, QRect>> cheat_rects;
     /// What was drawn last, to draw again only when it changes
     QString drawn;

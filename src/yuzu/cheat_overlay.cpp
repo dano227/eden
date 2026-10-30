@@ -23,8 +23,11 @@ constexpr int Gap = 4;
 constexpr int Inner = 8;
 /// The most cheats in view at once; the wheel scrolls through the rest
 constexpr int VisibleRows = 9;
-/// The menu button stands for itself in the hover and press state
+/// The buttons stand for themselves in the hover and press state
 constexpr int MenuButton = -2;
+constexpr int ScrollUp = -3;
+constexpr int ScrollDown = -4;
+constexpr int FooterHeight = 22;
 
 Common::OverlayPanel& Panel() {
     return Common::GetOverlayPanel(Common::OverlayPanelId::Cheats);
@@ -38,6 +41,25 @@ void MenuIcon(QPainter& painter, const QRectF& rect) {
     for (int bar = -1; bar <= 1; ++bar) {
         const qreal y = rect.center().y() + bar * 4.5;
         painter.drawLine(QPointF(left, y), QPointF(right, y));
+    }
+    painter.setPen(Qt::NoPen);
+}
+
+/// An arrow head pointing right (tuck away), up or down (scroll), in the pen colour given
+void ArrowIcon(QPainter& painter, const QRectF& rect, Qt::ArrowType arrow, const QColor& color) {
+    painter.setPen(QPen(color, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    const QPointF c = rect.center();
+    constexpr qreal s = 4.0;
+    if (arrow == Qt::RightArrow) {
+        const QPointF points[3] = {{c.x() - s / 2, c.y() - s}, {c.x() + s / 2, c.y()},
+                                   {c.x() - s / 2, c.y() + s}};
+        painter.drawPolyline(points, 3);
+    } else {
+        const qreal d = arrow == Qt::UpArrow ? -1.0 : 1.0;
+        const QPointF points[3] = {{c.x() - s, c.y() - d * s / 2}, {c.x(), c.y() + d * s / 2},
+                                   {c.x() + s, c.y() - d * s / 2}};
+        painter.drawPolyline(points, 3);
     }
     painter.setPen(Qt::NoPen);
 }
@@ -86,6 +108,10 @@ bool CheatOverlay::HandleMouse(QEvent* event, const GRenderWindow& window) {
     int target = -1;
     if (menu_rect.contains(cursor.at)) {
         target = MenuButton;
+    } else if (up_rect.contains(cursor.at)) {
+        target = ScrollUp;
+    } else if (down_rect.contains(cursor.at)) {
+        target = ScrollDown;
     }
     for (const auto& [index, rect] : cheat_rects) {
         if (rect.contains(cursor.at)) {
@@ -107,6 +133,9 @@ bool CheatOverlay::HandleMouse(QEvent* event, const GRenderWindow& window) {
             collapsed = !collapsed;
             hover = -1;
             Render();
+        } else if (pressed == target && (target == ScrollUp || target == ScrollDown)) {
+            // A page at a time
+            ScrollBy(target == ScrollUp ? -VisibleRows : VisibleRows);
         } else if (pressed == target && target >= 0 &&
                    target < static_cast<int>(cheats.size()) &&
                    !cheats[static_cast<std::size_t>(target)].locked) {
@@ -117,14 +146,7 @@ bool CheatOverlay::HandleMouse(QEvent* event, const GRenderWindow& window) {
         break;
     case QEvent::Wheel:
         if (!collapsed) {
-            const int steps = static_cast<QWheelEvent*>(event)->angleDelta().y() / 120;
-            const int last = (std::max)(0, static_cast<int>(cheats.size()) - VisibleRows);
-            const int moved = (std::clamp)(scroll - (steps == 0 ? 0 : steps), 0, last);
-            if (moved != scroll) {
-                scroll = moved;
-                hover = -1;
-                Render();
-            }
+            ScrollBy(-static_cast<QWheelEvent*>(event)->angleDelta().y() / 120);
         }
         break;
     default:
@@ -133,6 +155,15 @@ bool CheatOverlay::HandleMouse(QEvent* event, const GRenderWindow& window) {
     // (Over the panel, the game gets no touch)
     event->accept();
     return true;
+}
+
+void CheatOverlay::ScrollBy(int rows) {
+    const int last = (std::max)(0, static_cast<int>(cheats.size()) - VisibleRows);
+    const int moved = (std::clamp)(scroll + rows, 0, last);
+    if (moved != scroll) {
+        scroll = moved;
+        Render();
+    }
 }
 
 void CheatOverlay::Render() {
@@ -174,6 +205,8 @@ void CheatOverlay::Render() {
     const QColor hover_fill(45, 95, 200, 150);
 
     menu_rect = {};
+    up_rect = {};
+    down_rect = {};
     cheat_rects.clear();
 
     // Tucked away: only the menu button, against the screen's edge (a green dot while any
@@ -203,7 +236,7 @@ void CheatOverlay::Render() {
     const int rows = last - first;
     const int rows_top = HeaderHeight + Gap + InfoHeight + Gap;
     const int footer_top = rows_top + rows * (RowHeight + Gap);
-    const int height = (more ? footer_top + 20 : footer_top - Gap) + 2;
+    const int height = (more ? footer_top + FooterHeight : footer_top - Gap) + 2;
     const int width = PanelWidth + 2;
 
     QImage image{width, height, QImage::Format_RGBA8888};
@@ -212,13 +245,13 @@ void CheatOverlay::Render() {
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::TextAntialiasing);
 
-    // The header: the menu button, the title and how many are on
+    // The header: the button that tucks it away, the title and how many are on
     const QRectF header(1, 1, PanelWidth, HeaderHeight);
     Style::Pill(painter, header, Style::Fill);
     const QRectF menu(header.left() + 4, header.top() + 4, HeaderHeight - 8 + 6,
                       HeaderHeight - 8);
     Style::Pill(painter, menu, hover == MenuButton ? hover_fill : QColor(255, 255, 255, 30));
-    MenuIcon(painter, menu);
+    ArrowIcon(painter, menu, Qt::RightArrow, QColor(245, 245, 245));
     menu_rect = menu.toRect();
     painter.setFont(title_font);
     painter.setPen(Style::Text);
@@ -268,19 +301,27 @@ void CheatOverlay::Render() {
         cheat_rects.emplace_back(i, row.toRect());
     }
 
-    // More than fit: which ones are in view (the wheel scrolls)
+    // More than fit: which ones are in view, between buttons that page up and down (the
+    // wheel scrolls too)
     if (more) {
-        const QRectF footer(PanelWidth / 2.0 - 70, footer_top, 140, 18);
+        const QRectF footer(PanelWidth / 2.0 - 80, footer_top, 160, FooterHeight);
         Style::Pill(painter, footer, Style::Fill);
+        const auto scroll_button = [&](const QRectF& rect, int which, Qt::ArrowType arrow,
+                                       bool usable) {
+            Style::Pill(painter, rect,
+                        hover == which && usable ? hover_fill : QColor(255, 255, 255, 30));
+            ArrowIcon(painter, rect, arrow, usable ? QColor(245, 245, 245) : Style::DimText);
+            return usable ? rect.toRect() : QRect{};
+        };
+        up_rect = scroll_button(QRectF(footer.left() + 3, footer.top() + 3, 34, FooterHeight - 6),
+                                ScrollUp, Qt::UpArrow, first > 0);
+        down_rect = scroll_button(
+            QRectF(footer.right() - 3 - 34, footer.top() + 3, 34, FooterHeight - 6), ScrollDown,
+            Qt::DownArrow, last < count);
         painter.setFont(small_font);
         painter.setPen(Style::DimText);
         painter.drawText(footer, Qt::AlignCenter,
-                         QStringLiteral("%1 %2–%3 / %4 %5")
-                             .arg(first > 0 ? QStringLiteral("▲") : QStringLiteral("△"))
-                             .arg(first + 1)
-                             .arg(last)
-                             .arg(count)
-                             .arg(last < count ? QStringLiteral("▼") : QStringLiteral("▽")));
+                         QStringLiteral("%1–%2 / %3").arg(first + 1).arg(last).arg(count));
     }
     painter.end();
     GameOverlay::Publish(panel, &image);
