@@ -767,6 +767,9 @@ private:
         QString note;
     };
     std::vector<ControllerHint> controller_hints;
+    /// A game running with no controller: since when (0 none), and whether it was said
+    qint64 no_controller_since = 0;
+    bool no_controller_told = false;
     /// The flashes already turned into hints, per player (green, red)
     std::array<qint64, 10> hinted_join{};
     std::array<qint64, 10> hinted_leave{};

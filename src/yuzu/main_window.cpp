@@ -2762,6 +2762,21 @@ bool RouteSdlBindings(Settings::PlayerInput& player, const std::string& guid, in
     return routed;
 }
 
+/// The binding sets Modern Console starts from: the user's players without their mappings or
+/// profiles. Modern Console never takes the manual modes' mappings (keyboard and mouse
+/// included): each controller gets its own default mapping, or its player's picked profile.
+std::array<Settings::PlayerInput, 10> ModernStartSets(
+    const std::array<Settings::PlayerInput, 10>& user_players) {
+    auto sets = user_players;
+    for (auto& set : sets) {
+        set.buttons.fill({});
+        set.analogs.fill({});
+        set.motions.fill({});
+        set.profile_name.clear();
+    }
+    return sets;
+}
+
 } // Anonymous namespace
 
 void MainWindow::SaveAllConfigValues() {
@@ -2798,10 +2813,11 @@ void MainWindow::RestoreConsoleProfile() {
     }
     // Booting a game switches the players to its own copy (the per-game config read), and
     // the engine drove that copy since. Both get the user's players back, or the global copy
-    // keeps the engine's pre-boot state and that is what the next save writes.
+    // keeps the engine's pre-boot state and that is what the next save writes. (The game's
+    // copy as it was read at boot, before the engine drove it)
     Settings::values.players.GetValue(true) = *console_profile;
     if (!Settings::values.players.UsingGlobal()) {
-        Settings::values.players.GetValue() = ConsoleBindingSets();
+        Settings::values.players.GetValue() = game_profiles ? *game_profiles : *console_profile;
     }
     console_profile.reset();
     game_profiles.reset();
@@ -2813,13 +2829,13 @@ Settings::PlayerInput& MainWindow::SessionSet(int set) {
         return (*game_profiles)[set];
     }
     if (!session_sets) {
-        session_sets = *console_profile;
+        session_sets = ModernStartSets(*console_profile);
     }
     return (*session_sets)[set];
 }
 
 std::array<Settings::PlayerInput, 10> MainWindow::ConsoleBindingSets() const {
-    auto sets = session_sets ? *session_sets : *console_profile;
+    auto sets = session_sets ? *session_sets : ModernStartSets(*console_profile);
     if (game_profiles) {
         for (size_t i = 0; i < sets.size(); ++i) {
             if (!(*game_profiles)[i].profile_name.empty()) {
@@ -2992,7 +3008,7 @@ void MainWindow::MergeConsoleProfileEdits(const std::array<Settings::PlayerInput
     // The handheld's own non-SDL motion (a DSU server on the deck) is held back from every
     // external pad: whatever the dialog makes of a player the handheld does not hold, it must
     // never clear that binding from the handheld's set. Kept here and put back at the end.
-    const auto handheld_motions_kept = (*console_profile)[0].motions;
+    const auto handheld_motions_kept = SessionSet(0).motions;
     const auto own_slot = pad_slots.find(builtin_pad_id);
     // (While the handheld holds a player, edits on that player are its set's own: only a
     // handheld without a player - externals around - cannot have edited it)
@@ -4780,7 +4796,7 @@ void MainWindow::ApplyConsoleControllerMode() {
         // engine changes from here on stays runtime only (see SaveAllConfigValues)
         console_profile = Settings::values.players.GetValue(true);
         game_profiles.reset();
-        session_sets = *console_profile;
+        session_sets = ModernStartSets(*console_profile);
         ApplySeatProfiles();
         LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside");
         controller_names = ReadControllerNames();
@@ -5765,22 +5781,14 @@ void MainWindow::ApplyConsoleControllerMode() {
                     LOG_INFO(Frontend, "console-mode: inst={} carries the P{} set", id, set + 1);
                 }
             }
-            // A slot the user never bound a controller to (keyboard or empty, P6+ typically)
-            // would leave its pad dead: borrow the nearest lower external slot's set.
+            // A set with no controller mappings (no profile picked and nothing remapped this
+            // session) gives the pad its own default mapping, below
             const auto has_sdl = [](const Settings::PlayerInput& p) {
                 return std::any_of(p.buttons.begin(), p.buttons.end(), [](const std::string& b) {
                     return !b.empty() && Common::ParamPackage{b}.Get("engine", "") == "sdl";
                 });
             };
-            int set_index = is_builtin ? 0 : pad_sets[set_key];
-            if (!is_builtin && !has_sdl(profile[set_index])) {
-                for (int k = set_index - 1; k >= 0; --k) {
-                    if (has_sdl(profile[k]) && (k > 0 || !builtin_valid || !handheld)) {
-                        set_index = k;
-                        break;
-                    }
-                }
-            }
+            const int set_index = is_builtin ? 0 : pad_sets[set_key];
             slot_set[slot] = set_index;
             Settings::PlayerInput want = players[slot];
             if (has_sdl(profile[set_index])) {
@@ -5791,8 +5799,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 want.profile_name = own.profile_name;
                 RouteSdlBindings(want, binding->first, binding->second);
             } else {
-                // No controller mappings to carry (a fresh setup maps player one to the
-                // keyboard): the controller gets its own default mapping, for this session
+                // No controller mappings to carry: the controller gets its own default
+                // mapping, for this session
                 Common::ParamPackage device;
                 device.Set("engine", "sdl");
                 device.Set("guid", binding->first);
@@ -5956,6 +5964,31 @@ void MainWindow::ApplyConsoleControllerMode() {
         if (players[i].connected != want) {
             players[i].connected = want;
             changed = true;
+        }
+    }
+
+    // Keyboard and mouse are the manual modes': a game running with no controller is told
+    // so, once per game
+    {
+        const bool running = QtCommon::system && QtCommon::system->IsPoweredOn();
+        const bool any_player = std::any_of(players.begin(), players.end(),
+                                            [](const auto& player) { return player.connected; });
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        if (!running) {
+            no_controller_told = false;
+            no_controller_since = 0;
+        } else if (any_player) {
+            no_controller_since = 0;
+        } else if (!no_controller_told) {
+            if (no_controller_since == 0) {
+                no_controller_since = now_ms;
+            } else if (now_ms - no_controller_since >= 3000) {
+                no_controller_told = true;
+                controller_hints.push_back(
+                    {QString{}, 0, false, now_ms, false,
+                     tr("No controller: connect one, or use Manual for keyboard and mouse")});
+                LOG_INFO(Frontend, "console-mode: a game runs with no controller");
+            }
         }
     }
 

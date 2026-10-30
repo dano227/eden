@@ -929,7 +929,9 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     add_about(tr("Modern Console"),
               tr("Controllers are assigned like on the console: each one that connects becomes "
                  "the next player, with nothing to set up. Players keep their own controls when "
-                 "they swap, and a profile picked for a player is used again next time."));
+                 "they swap, and a profile picked for a player is used again next time. Its "
+                 "mappings are its own: each controller starts with its standard mapping, and "
+                 "the Manual modes' players are never changed. Keyboard and mouse: use Manual."));
     add_about(tr("Handheld Console"),
               tr("For a handheld PC with built-in controls. The same as Modern Console, but the "
                  "built-in controls always come last: connect a controller and it becomes "
