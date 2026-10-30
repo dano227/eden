@@ -698,19 +698,10 @@ namespace {
 bool IsMotionController(unsigned vendor, unsigned product) {
     switch (vendor) {
     case 0x28DE:
-        switch (product) {
-        case 0x1205: // Steam Deck
-        case 0x1102: // Steam Controller: wired
-        case 0x1142: // Steam Controller: wireless dongle
-        case 0x1105: // Steam Controller: Bluetooth
-        case 0x1106: // Steam Controller: Bluetooth
-        case 0x1302: // Steam Controller (2026)
-        case 0x1304: // Steam Controller (2026): wireless dongle (Proteus)
-        case 0x1305: // Steam Controller (2026): wireless dongle (Nereid)
-            return true;
-        default:
-            return false;
-        }
+        // The Steam Deck only. Steam Controllers stay with Steam: SDL's driver would talk to them
+        // next to it (they may not take two voices); their motion comes from Read Valve
+        // Controllers Directly (ValveMotion), which only listens.
+        return product == 0x1205;
     case 0x054C: // Sony
     case 0x057E: // Nintendo
         return true;
