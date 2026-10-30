@@ -7,8 +7,13 @@
 #include <QImage>
 #include <QObject>
 #include <QPainter>
+#include <QPainterPath>
+#include <QSettings>
+#include <QStringList>
 #include <QWheelEvent>
 
+#include "common/fs/fs.h"
+#include "common/fs/path_util.h"
 #include "common/overlay_panels.h"
 #include "yuzu/cheat_overlay.h"
 #include "yuzu/overlay_panel.h"
@@ -27,7 +32,14 @@ constexpr int VisibleRows = 9;
 constexpr int MenuButton = -2;
 constexpr int ScrollUp = -3;
 constexpr int ScrollDown = -4;
+constexpr int EyeButton = -5;
 constexpr int FooterHeight = 22;
+
+/// The cheats hidden from the overlay, per game (by cheat name)
+QString HiddenFile() {
+    return QString::fromStdString(Common::FS::PathToUTF8String(
+        Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "cheat_overlay.ini"));
+}
 
 Common::OverlayPanel& Panel() {
     return Common::GetOverlayPanel(Common::OverlayPanelId::Cheats);
@@ -64,6 +76,25 @@ void ArrowIcon(QPainter& painter, const QRectF& rect, Qt::ArrowType arrow, const
     painter.setPen(Qt::NoPen);
 }
 
+/// An eye (shown), or an eye struck through (hidden)
+void EyeIcon(QPainter& painter, const QRectF& rect, bool open, const QColor& color) {
+    const QPointF c = rect.center();
+    painter.setPen(QPen(color, 1.6));
+    painter.setBrush(Qt::NoBrush);
+    QPainterPath eye;
+    eye.moveTo(c.x() - 7, c.y());
+    eye.quadTo(c.x(), c.y() - 7, c.x() + 7, c.y());
+    eye.quadTo(c.x(), c.y() + 7, c.x() - 7, c.y());
+    painter.drawPath(eye);
+    painter.setBrush(color);
+    painter.drawEllipse(c, 2.0, 2.0);
+    if (!open) {
+        painter.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(QPointF(c.x() - 7, c.y() + 6), QPointF(c.x() + 7, c.y() - 6));
+    }
+    painter.setPen(Qt::NoPen);
+}
+
 } // Anonymous namespace
 
 CheatOverlay::CheatOverlay(std::function<void(int)> toggle_cheat_)
@@ -72,11 +103,22 @@ CheatOverlay::CheatOverlay(std::function<void(int)> toggle_cheat_)
 void CheatOverlay::Update(bool shown_, const QString& game_id_, const QString& build_id_,
                           std::vector<Cheat> cheats_) {
     shown = shown_;
-    game_id = game_id_;
+    if (!game_id_.isEmpty() && game_id_ != game_id) {
+        // Another game: its own hidden cheats
+        QSettings settings{HiddenFile(), QSettings::IniFormat};
+        const QStringList names =
+            settings.value(QStringLiteral("hidden/%1").arg(game_id_)).toStringList();
+        hidden = {names.begin(), names.end()};
+        choosing = false;
+        scroll = 0;
+    }
+    if (!game_id_.isEmpty()) {
+        game_id = game_id_;
+    }
     build_id = build_id_;
     cheats = std::move(cheats_);
     scroll = (std::clamp)(scroll, 0,
-                          (std::max)(0, static_cast<int>(cheats.size()) - VisibleRows));
+                          (std::max)(0, static_cast<int>(Listed().size()) - VisibleRows));
     if (!shown || cheats.empty()) {
         hover = -1;
         pressed = -1;
@@ -112,6 +154,8 @@ bool CheatOverlay::HandleMouse(QEvent* event, const GRenderWindow& window) {
         target = ScrollUp;
     } else if (down_rect.contains(cursor.at)) {
         target = ScrollDown;
+    } else if (eye_rect.contains(cursor.at)) {
+        target = EyeButton;
     }
     for (const auto& [index, rect] : cheat_rects) {
         if (rect.contains(cursor.at)) {
@@ -136,11 +180,31 @@ bool CheatOverlay::HandleMouse(QEvent* event, const GRenderWindow& window) {
         } else if (pressed == target && (target == ScrollUp || target == ScrollDown)) {
             // A page at a time
             ScrollBy(target == ScrollUp ? -VisibleRows : VisibleRows);
+        } else if (pressed == target && target == EyeButton) {
+            // Choosing what shows lists every cheat; done, only the shown ones
+            choosing = !choosing;
+            scroll = 0;
+            hover = -1;
+            Render();
         } else if (pressed == target && target >= 0 &&
-                   target < static_cast<int>(cheats.size()) &&
-                   !cheats[static_cast<std::size_t>(target)].locked) {
-            // (The menu's action redraws the panel through Update)
-            toggle_cheat(target);
+                   target < static_cast<int>(cheats.size())) {
+            const auto& cheat = cheats[static_cast<std::size_t>(target)];
+            if (choosing) {
+                if (!hidden.erase(cheat.name)) {
+                    hidden.insert(cheat.name);
+                }
+                QSettings settings{HiddenFile(), QSettings::IniFormat};
+                const QStringList names{hidden.begin(), hidden.end()};
+                if (names.isEmpty()) {
+                    settings.remove(QStringLiteral("hidden/%1").arg(game_id));
+                } else {
+                    settings.setValue(QStringLiteral("hidden/%1").arg(game_id), names);
+                }
+                Render();
+            } else if (!cheat.locked) {
+                // (The menu's action redraws the panel through Update)
+                toggle_cheat(target);
+            }
         }
         pressed = -1;
         break;
@@ -157,8 +221,18 @@ bool CheatOverlay::HandleMouse(QEvent* event, const GRenderWindow& window) {
     return true;
 }
 
+std::vector<int> CheatOverlay::Listed() const {
+    std::vector<int> listed;
+    for (int i = 0; i < static_cast<int>(cheats.size()); ++i) {
+        if (choosing || !hidden.contains(cheats[static_cast<std::size_t>(i)].name)) {
+            listed.push_back(i);
+        }
+    }
+    return listed;
+}
+
 void CheatOverlay::ScrollBy(int rows) {
-    const int last = (std::max)(0, static_cast<int>(cheats.size()) - VisibleRows);
+    const int last = (std::max)(0, static_cast<int>(Listed().size()) - VisibleRows);
     const int moved = (std::clamp)(scroll + rows, 0, last);
     if (moved != scroll) {
         scroll = moved;
@@ -176,17 +250,19 @@ void CheatOverlay::Render() {
         return;
     }
     // Drawn again only when what it shows changes (each image is uploaded again)
-    QString state = QStringLiteral("%1|%2|%3|%4|%5|%6")
+    QString state = QStringLiteral("%1|%2|%3|%4|%5|%6|%7")
                         .arg(static_cast<int>(collapsed))
+                        .arg(static_cast<int>(choosing))
                         .arg(hover)
                         .arg(scroll)
                         .arg(game_id, build_id)
                         .arg(cheats.size());
     for (const auto& cheat : cheats) {
-        state += QStringLiteral("|%1%2%3")
+        state += QStringLiteral("|%1%2%3%4")
                      .arg(static_cast<int>(cheat.enabled))
                      .arg(static_cast<int>(cheat.locked))
-                     .arg(cheat.name);
+                     .arg(cheat.name)
+                     .arg(static_cast<int>(hidden.contains(cheat.name)));
     }
     if (state == drawn) {
         return;
@@ -207,6 +283,7 @@ void CheatOverlay::Render() {
     menu_rect = {};
     up_rect = {};
     down_rect = {};
+    eye_rect = {};
     cheat_rects.clear();
 
     // Tucked away: only the menu button, against the screen's edge (a green dot while any
@@ -230,10 +307,13 @@ void CheatOverlay::Render() {
     }
 
     const int count = static_cast<int>(cheats.size());
+    const std::vector<int> listed = Listed();
+    const int listed_count = static_cast<int>(listed.size());
     const int first = scroll;
-    const int last = (std::min)(count, first + VisibleRows);
-    const bool more = count > VisibleRows;
-    const int rows = last - first;
+    const int last = (std::min)(listed_count, first + VisibleRows);
+    const bool more = listed_count > VisibleRows;
+    // (Every cheat hidden: a line that says so)
+    const int rows = (std::max)(1, last - first);
     const int rows_top = HeaderHeight + Gap + InfoHeight + Gap;
     const int footer_top = rows_top + rows * (RowHeight + Gap);
     const int height = (more ? footer_top + FooterHeight : footer_top - Gap) + 2;
@@ -257,10 +337,23 @@ void CheatOverlay::Render() {
     painter.setPen(Style::Text);
     painter.drawText(QRectF(menu.right() + 8, header.top(), 120, header.height()),
                      Qt::AlignVCenter | Qt::AlignLeft, QObject::tr("Cheats"));
+    // The eye: choose which cheats show (lit while choosing)
+    const QRectF eye(header.right() - 4 - 30, header.top() + 4, 30, HeaderHeight - 8);
+    Style::Pill(painter, eye,
+                choosing || hover == EyeButton ? hover_fill : QColor(255, 255, 255, 30));
+    EyeIcon(painter, eye, true, QColor(245, 245, 245));
+    eye_rect = eye.toRect();
     painter.setFont(small_font);
-    painter.setPen(on_count > 0 ? QColor(120, 220, 140) : Style::DimText);
-    painter.drawText(header.adjusted(0, 0, -(Inner + 4), 0), Qt::AlignVCenter | Qt::AlignRight,
-                     QObject::tr("%1 of %2 on").arg(on_count).arg(count));
+    const QRectF count_rect = header.adjusted(0, 0, -(eye.width() + 4 + 8), 0);
+    if (choosing) {
+        painter.setPen(Style::DimText);
+        painter.drawText(count_rect, Qt::AlignVCenter | Qt::AlignRight,
+                         QObject::tr("Tap to hide or show"));
+    } else {
+        painter.setPen(on_count > 0 ? QColor(120, 220, 140) : Style::DimText);
+        painter.drawText(count_rect, Qt::AlignVCenter | Qt::AlignRight,
+                         QObject::tr("%1 of %2 on").arg(on_count).arg(count));
+    }
 
     // The game: its title id and the build id its cheat files are named after
     const QRectF info(1, header.bottom() + Gap, PanelWidth, InfoHeight);
@@ -279,19 +372,34 @@ void CheatOverlay::Render() {
     info_line(0, QObject::tr("Game ID"), game_id);
     info_line(1, QObject::tr("Build ID"), build_id);
 
-    // The cheats: a pill each, with its switch
+    // The cheats: a pill each, with its switch (or, while choosing, whether it shows)
     constexpr int switch_w = 34;
     constexpr int switch_h = 18;
-    for (int i = first; i < last; ++i) {
+    if (listed.empty()) {
+        const QRectF row(1, rows_top, PanelWidth, RowHeight);
+        Style::Pill(painter, row, Style::Fill);
+        painter.setFont(text_font);
+        painter.setPen(Style::DimText);
+        painter.drawText(row, Qt::AlignCenter, QObject::tr("All cheats are hidden"));
+    }
+    for (int k = first; k < last; ++k) {
+        const int i = listed[static_cast<std::size_t>(k)];
         const auto& cheat = cheats[static_cast<std::size_t>(i)];
-        const int y = rows_top + (i - first) * (RowHeight + Gap);
+        const bool is_hidden = hidden.contains(cheat.name);
+        const int y = rows_top + (k - first) * (RowHeight + Gap);
         const QRectF row(1, y, PanelWidth, RowHeight);
-        Style::Pill(painter, row, hover == i && !cheat.locked ? hover_fill : Style::Fill);
+        Style::Pill(painter, row,
+                    hover == i && (choosing || !cheat.locked) ? hover_fill : Style::Fill);
         const QRectF toggle(row.right() - Inner - switch_w, row.center().y() - switch_h / 2.0,
                             switch_w, switch_h);
-        Style::Switch(painter, toggle, cheat.enabled || cheat.locked, cheat.locked);
+        if (choosing) {
+            EyeIcon(painter, toggle, !is_hidden,
+                    is_hidden ? Style::DimText : QColor(245, 245, 245));
+        } else {
+            Style::Switch(painter, toggle, cheat.enabled || cheat.locked, cheat.locked);
+        }
         painter.setFont(text_font);
-        painter.setPen(cheat.locked ? Style::DimText : Style::Text);
+        painter.setPen(cheat.locked || (choosing && is_hidden) ? Style::DimText : Style::Text);
         const int name_w = static_cast<int>(toggle.left() - row.left()) - Inner * 2 - 6;
         const QString name = cheat.locked ? QObject::tr("%1 (master code)").arg(cheat.name)
                                           : cheat.name;
@@ -317,11 +425,11 @@ void CheatOverlay::Render() {
                                 ScrollUp, Qt::UpArrow, first > 0);
         down_rect = scroll_button(
             QRectF(footer.right() - 3 - 34, footer.top() + 3, 34, FooterHeight - 6), ScrollDown,
-            Qt::DownArrow, last < count);
+            Qt::DownArrow, last < listed_count);
         painter.setFont(small_font);
         painter.setPen(Style::DimText);
         painter.drawText(footer, Qt::AlignCenter,
-                         QStringLiteral("%1–%2 / %3").arg(first + 1).arg(last).arg(count));
+                         QStringLiteral("%1–%2 / %3").arg(first + 1).arg(last).arg(listed_count));
     }
     painter.end();
     GameOverlay::Publish(panel, &image);

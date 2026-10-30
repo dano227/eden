@@ -4,6 +4,7 @@
 #pragma once
 
 #include <functional>
+#include <set>
 #include <vector>
 
 #include <QRect>
@@ -15,7 +16,7 @@ class QEvent;
 /// The running game's cheats drawn over the game (top right), so they can be
 /// turned on and off also where no window shows over the game (Steam's Game Mode). Its arrow
 /// button tucks it away against the screen's right edge, where its menu button brings it back.
-/// Drawn as an overlay panel.
+/// Its eye button chooses which cheats show (remembered per game). Drawn as an overlay panel.
 class CheatOverlay {
 public:
     struct Cheat {
@@ -41,10 +42,16 @@ private:
     void Render();
     /// Moves the cheats in view by some rows (within the list)
     void ScrollBy(int rows);
+    /// The cheats listed (their indices): the shown ones, or every one while choosing
+    [[nodiscard]] std::vector<int> Listed() const;
 
     std::function<void(int)> toggle_cheat;
     bool shown = false;
     bool collapsed = false;
+    /// Choosing which cheats show (the eye button): every cheat listed, each with its eye
+    bool choosing = false;
+    /// The cheats hidden from the panel (by name), for this game
+    std::set<QString> hidden;
     QString game_id;
     QString build_id;
     std::vector<Cheat> cheats;
@@ -59,6 +66,7 @@ private:
     QRect menu_rect;
     QRect up_rect;
     QRect down_rect;
+    QRect eye_rect;
     std::vector<std::pair<int, QRect>> cheat_rects;
     /// What was drawn last, to draw again only when it changes
     QString drawn;
