@@ -654,6 +654,9 @@ struct Values {
     SwitchableSetting<bool> emulate_bgr565{linkage, false, "emulate_bgr565",
                                             Category::RendererHacks};
 
+    SwitchableSetting<bool> depth_clamp{linkage, false, "depth_clamp",
+                                                     Category::RendererHacks};
+
     SwitchableSetting<bool> use_asynchronous_shaders{linkage, false, "use_asynchronous_shaders",
                                                      Category::RendererHacks};
 
