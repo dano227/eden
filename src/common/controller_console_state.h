@@ -44,6 +44,8 @@ struct ControllerConsoleState {
         /// guess on a reconnect
         int origin = -1;
         bool guessed = false;
+        /// The name given to its controller ("" none): `name` is then "Name (Xbox)"
+        std::string custom_name;
     };
     /// True while an automatic assignment mode runs (the engine owns the players)
     bool engine_active = false;
@@ -63,6 +65,8 @@ struct ControllerConsoleState {
     /// Players whose Bluetooth controller is to be turned off (disconnected): it sits out until
     /// it reconnects, and the player is free for the next controller to connect
     std::vector<int> remove_requests;
+    /// Names given to players' controllers from the Controllers tab ("" takes it off)
+    std::vector<std::pair<int, std::string>> rename_requests;
     /// Players whose controller the Controllers tab asked to rumble (a click on its row)
     std::vector<int> rumble_requests;
     /// An input profile picked for a player: the engine puts the profile's mappings on the set

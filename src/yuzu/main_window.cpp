@@ -86,6 +86,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QUrl>
 #ifdef __linux__
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -2313,6 +2314,70 @@ bool StyleSupported(Core::HID::NpadStyleIndex style, const Core::HID::NpadStyleT
     }
 }
 
+/// A controller's short name, for a named player ("John (Xbox)")
+QString ShortControllerName(SDL_JoystickID id, const QString& full) {
+    const Uint16 vendor = SDL_GetJoystickVendorForID(id);
+    const Uint16 product = SDL_GetJoystickProductForID(id);
+    if (vendor == 0x28DE && product == 0x1205) {
+        return QStringLiteral("Steam Deck");
+    }
+    if (vendor == 0x28DE && InputCommon::ValveMotion::Family(product) != 0) {
+        return QStringLiteral("Steam Controller");
+    }
+    switch (SDL_GetGamepadTypeForID(id)) {
+    case SDL_GAMEPAD_TYPE_XBOX360:
+    case SDL_GAMEPAD_TYPE_XBOXONE:
+        return QStringLiteral("Xbox");
+    case SDL_GAMEPAD_TYPE_PS3:
+        return QStringLiteral("DualShock 3");
+    case SDL_GAMEPAD_TYPE_PS4:
+        return QStringLiteral("DualShock 4");
+    case SDL_GAMEPAD_TYPE_PS5:
+        return QStringLiteral("DualSense");
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+        return QStringLiteral("Pro Controller");
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+        return QStringLiteral("Joy-Con");
+    case SDL_GAMEPAD_TYPE_GAMECUBE:
+        return QStringLiteral("GameCube");
+    default:
+        return full;
+    }
+}
+
+/// The kept names (console_controller_names): key=name entries, ';' and '=' and '%' escaped
+std::map<std::string, std::string> ReadControllerNames() {
+    std::map<std::string, std::string> names;
+    const QString stored =
+        QString::fromStdString(Settings::values.console_controller_names.GetValue());
+    for (const QString& entry : stored.split(QLatin1Char(';'), Qt::SkipEmptyParts)) {
+        const auto at = entry.indexOf(QLatin1Char('='));
+        if (at > 0) {
+            names[QUrl::fromPercentEncoding(entry.left(at).toUtf8()).toStdString()] =
+                QUrl::fromPercentEncoding(entry.mid(at + 1).toUtf8()).toStdString();
+        }
+    }
+    return names;
+}
+
+void WriteControllerNames(const std::map<std::string, std::string>& names) {
+    QStringList entries;
+    for (const auto& [key, name] : names) {
+        // (Only what lasts: Bluetooth controllers and the handheld's own)
+        if (!key.starts_with("bt:") && key != "handheld") {
+            continue;
+        }
+        entries.push_back(
+            QString::fromLatin1(QUrl::toPercentEncoding(QString::fromStdString(key))) +
+            QLatin1Char('=') +
+            QString::fromLatin1(QUrl::toPercentEncoding(QString::fromStdString(name))));
+    }
+    Settings::values.console_controller_names.SetValue(
+        entries.join(QLatin1Char(';')).toStdString());
+}
+
 /// A pad's USB product id, under the same lock as the rest of the API use.
 Uint16 PadProduct(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -4339,6 +4404,7 @@ void MainWindow::ApplyConsoleControllerMode() {
         session_sets = *console_profile;
         ApplySeatProfiles();
         LOG_INFO(Frontend, "console-mode: entered, the user's players are kept aside");
+        controller_names = ReadControllerNames();
         if (Common::ControllerProbes()) {
             LOG_INFO(Frontend, "console-mode: entered with profile P1 motions {}",
                      MotionTrace((*console_profile)[0]));
@@ -5523,6 +5589,46 @@ void MainWindow::ApplyConsoleControllerMode() {
         constexpr qint64 flash_ms = 1500;
         const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
         static const QRegularExpression port_number{QStringLiteral(" \\d+(?=( \\(Steam\\))?$)")};
+        static const QRegularExpression steam_suffix{QStringLiteral(" \\(Steam\\)$")};
+        // A player's controller as named: its own name ("Xbox One Controller", without Steam's
+        // tag), or the name given to it with its short name ("John (Xbox)")
+        const auto name_key = [&](u32 pad) {
+            if (builtin_valid && pad == builtin_match_id) {
+                return std::string{"handheld"};
+            }
+            if (const auto address = inst_address.find(pad); address != inst_address.end()) {
+                return "bt:" + address->second;
+            }
+            return "id:" + live[pad];
+        };
+        // Names given from the Controllers tab: they belong to the controller (its swaps,
+        // reconnects and Turn Off follow it; Bluetooth ones and the handheld's own are kept)
+        {
+            std::vector<std::pair<int, std::string>> renames;
+            {
+                auto& state = Common::GetControllerConsoleState();
+                std::scoped_lock lock{state.mutex};
+                renames.swap(state.rename_requests);
+            }
+            for (const auto& [player, given] : renames) {
+                const auto held =
+                    std::find_if(pad_slots.begin(), pad_slots.end(), [&](const auto& e) {
+                        return e.second == player && live.contains(e.first);
+                    });
+                if (held == pad_slots.end()) {
+                    continue;
+                }
+                const std::string key = name_key(held->first);
+                if (given.empty()) {
+                    controller_names.erase(key);
+                } else {
+                    controller_names[key] = given;
+                }
+                WriteControllerNames(controller_names);
+                LOG_INFO(Frontend, "console-mode: P{} named \"{}\"", player + 1, given);
+            }
+        }
+        std::array<std::string, 10> custom_names{};
         overlay_rows.clear();
         std::vector<Common::ControllerConsoleState::PlayerRow> tab_rows;
         // Flashes follow the controller behind a player, not just the player: in handheld mode
@@ -5545,6 +5651,13 @@ void MainWindow::ApplyConsoleControllerMode() {
                 const auto [display, raw] = label_of(pad, std::string{});
                 QString name = display.isEmpty() ? raw : display;
                 name.remove(port_number);
+                name.remove(steam_suffix);
+                const auto given = controller_names.find(name_key(pad));
+                if (given != controller_names.end()) {
+                    custom_names[static_cast<std::size_t>(i)] = given->second;
+                    name = QStringLiteral("%1 (%2)").arg(QString::fromStdString(given->second),
+                                                         ShortControllerName(pad, name));
+                }
                 overlay_row_name[i] = name;
                 if (since == 0 || gone != 0) {
                     since = now_ms;
@@ -5606,7 +5719,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                                                                                             : 0;
             tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
                                 flash_since, ConsoleBindingSets()[slot_set[i]].profile_name,
-                                turn_off, origin, guessed});
+                                turn_off, origin, guessed,
+                                custom_names[static_cast<std::size_t>(i)]});
         }
         {
             std::string handheld_name;

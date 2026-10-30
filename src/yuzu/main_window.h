@@ -595,6 +595,9 @@ private:
     /// Each Bluetooth controller's starting player, by address: kept through Turn Off and
     /// reconnects
     std::map<std::string, int> address_origin;
+    /// Names given to controllers, by controller (see the rows): "bt:<address>", "handheld",
+    /// or "id:<identity>" for the session
+    std::map<std::string, std::string> controller_names;
     /// The mode last logged (a change is logged), and each player's refused controller type
     /// as last logged
     std::optional<Settings::AppletMode> logged_mode;

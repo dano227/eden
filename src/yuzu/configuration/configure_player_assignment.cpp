@@ -19,11 +19,14 @@
 #include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFocusEvent>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -138,6 +141,56 @@ QIcon PowerIcon() {
 
 /// One player in the list: a click rumbles its controller, and a long press (or a drag) picks
 /// it up to drop on another player, which swaps the two
+/// A player's name that edits in place: it reads like a label ("John (Xbox)", or the
+/// controller's own name), and a click edits the name given to the controller. Enter or
+/// clicking away keeps it, Esc puts it back; an empty name takes it off.
+class PlayerNameEdit : public QLineEdit {
+public:
+    PlayerNameEdit(const QString& shown_, const QString& given_, QWidget* parent)
+        : QLineEdit(shown_, parent), shown{shown_}, given{given_} {
+        setObjectName(QStringLiteral("playerName"));
+        setFrame(false);
+        setCursorPosition(0);
+        QObject::connect(this, &QLineEdit::returnPressed, this, [this] { clearFocus(); });
+    }
+
+    std::function<void(const QString&)> on_rename;
+
+protected:
+    void focusInEvent(QFocusEvent* event) override {
+        setMaxLength(16);
+        setText(given);
+        selectAll();
+        QLineEdit::focusInEvent(event);
+    }
+
+    void focusOutEvent(QFocusEvent* event) override {
+        QLineEdit::focusOutEvent(event);
+        const QString name = text().trimmed();
+        if (!cancelled && name != given && on_rename) {
+            on_rename(name);
+        }
+        cancelled = false;
+        setMaxLength(32767);
+        setText(shown);
+        setCursorPosition(0);
+    }
+
+    void keyPressEvent(QKeyEvent* event) override {
+        if (event->key() == Qt::Key_Escape) {
+            cancelled = true;
+            clearFocus();
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+
+private:
+    QString shown;
+    QString given;
+    bool cancelled = false;
+};
+
 class PlayerRow : public QFrame {
 public:
     PlayerRow(int player_, QWidget* parent) : QFrame(parent), player{player_} {
@@ -1081,7 +1134,11 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
     if (!handheld_has_player) {
         signature += QStringLiteral("h:") + QString::fromStdString(handheld_name);
     }
-    if (signature != players_signature) {
+    // (Not while a name is being typed: the rows would be rebuilt under it)
+    const QWidget* focused = QApplication::focusWidget();
+    const bool naming = focused && focused->objectName() == QStringLiteral("playerName") &&
+                        players_box->isAncestorOf(focused);
+    if (signature != players_signature && !naming) {
         players_signature = signature;
         const bool any_turn_off = std::any_of(players.begin(), players.end(),
                                               [](const auto& e) { return e.turn_off != 0; });
@@ -1143,7 +1200,26 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                 }
             }
             line->addWidget(badge_box);
-            line->addWidget(new QLabel(QString::fromStdString(entry.name), row), 1);
+            // The name: click to name the player's controller ("John" shows as "John (Xbox)")
+            auto* name = new PlayerNameEdit(QString::fromStdString(entry.name),
+                                            QString::fromStdString(entry.custom_name), row);
+            name->setPlaceholderText(tr("Name this controller"));
+            name->setToolTip(tr("Click to name P%1's controller. The name follows the "
+                                "controller, and Bluetooth controllers keep it.")
+                                 .arg(player + 1));
+            name->setStyleSheet(Themed(QStringLiteral(
+                "QLineEdit#playerName { background: transparent; border: none; "
+                "border-bottom: 1px solid transparent; padding: 0px 2px; }"
+                "QLineEdit#playerName:hover { border-bottom: 1px dashed palette(mid); }"
+                "QLineEdit#playerName:focus { background: palette(base); "
+                "border-bottom: 1px solid palette(highlight); }")));
+            name->setReadOnly(entry.leaving);
+            name->on_rename = [player](const QString& given) {
+                auto& console = Common::GetControllerConsoleState();
+                std::scoped_lock lock{console.mutex};
+                console.rename_requests.emplace_back(player, given.toStdString());
+            };
+            line->addWidget(name, 1);
             const bool live = !entry.leaving;
 
             // The profile the player's controller carries; picking one puts it on it, and
