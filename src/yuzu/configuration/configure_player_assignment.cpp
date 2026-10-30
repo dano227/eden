@@ -1111,6 +1111,9 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             // player the controller started as
             auto* badge_box = new QWidget(row);
             badge_box->setFixedSize(40, 24);
+            // (Only the badge and its mark show: the dark themes paint a plain widget)
+            badge_box->setAttribute(Qt::WA_TranslucentBackground);
+            badge_box->setStyleSheet(QStringLiteral("background: transparent;"));
             auto* badge = new QLabel(QStringLiteral("P%1").arg(player + 1), badge_box);
             badge->setAlignment(Qt::AlignCenter);
             badge->setGeometry(0, 3, 34, 20);

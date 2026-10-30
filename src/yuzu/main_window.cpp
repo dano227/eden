@@ -3728,6 +3728,25 @@ void MainWindow::LearnBluetoothPads() {
                 ++count;
             }
         }
+        // Debug Probes: why a press didn't tell them apart (at most once a second)
+        if (count != 1 && Common::ControllerProbes()) {
+            static auto last = std::chrono::steady_clock::time_point{};
+            if (const auto now = std::chrono::steady_clock::now();
+                now - last > std::chrono::seconds{1}) {
+                last = now;
+                std::string nodes;
+                for (const auto& controller : controllers) {
+                    nodes += fmt::format(" {}[{}]", controller.address,
+                                         controller.events.empty()
+                                             ? std::string{"no input node"}
+                                             : controller.events.front().toStdString());
+                }
+                LOG_INFO(Frontend,
+                         "console-mode: {} pressed a button, {} of {} controllers of its model "
+                         "show one held:{}",
+                         pressed_pads.front().second, count, controllers.size(), nodes);
+            }
+        }
         if (count != 1) {
             continue;
         }
