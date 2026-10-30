@@ -142,7 +142,7 @@ QIcon PowerIcon() {
 /// One player in the list: a click rumbles its controller, and a long press (or a drag) picks
 /// it up to drop on another player, which swaps the two
 /// The edit field of a player's name: Enter applies and Esc cancels without reaching the
-/// dialog (whose default button Enter would press), and leaving it cancels
+/// dialog (whose default button Enter would press)
 class PlayerNameEdit : public QLineEdit {
 public:
     using QLineEdit::QLineEdit;
@@ -167,13 +167,6 @@ protected:
             return;
         }
         QLineEdit::keyPressEvent(event);
-    }
-
-    void focusOutEvent(QFocusEvent* event) override {
-        QLineEdit::focusOutEvent(event);
-        if (isVisible() && on_cancel) {
-            on_cancel();
-        }
     }
 };
 
@@ -1151,10 +1144,7 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
         signature += QStringLiteral("h:") + QString::fromStdString(handheld_name);
     }
     // (Not while a name is being typed: the rows would be rebuilt under it)
-    const QWidget* focused = QApplication::focusWidget();
-    const bool naming = focused && focused->objectName() == QStringLiteral("playerName") &&
-                        players_box->isAncestorOf(focused);
-    if (signature != players_signature && !naming) {
+    if (signature != players_signature && !editing_name) {
         players_signature = signature;
         const bool any_turn_off = std::any_of(players.begin(), players.end(),
                                               [](const auto& e) { return e.turn_off != 0; });
@@ -1243,19 +1233,24 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             auto* name_apply = name_button(1, tr("Apply the name"));
             auto* name_remove = name_button(2, tr("Remove the name"));
             name_apply->hide();
-            name_remove->hide();
+            // (The bin also shows beside the pencil while the controller has a name: one click
+            // puts its own name back)
+            name_remove->setVisible(!given.isEmpty());
             name_edit_button->setEnabled(!entry.leaving);
+            name_remove->setEnabled(!entry.leaving);
             const auto request = [player](const QString& value) {
                 auto& console = Common::GetControllerConsoleState();
                 std::scoped_lock lock{console.mutex};
                 console.rename_requests.emplace_back(player, value.trimmed().toStdString());
             };
-            const auto editing = [=](bool on) {
+            const auto editing = [=, this](bool on) {
+                // (While a name is typed, the rows aren't rebuilt under it)
+                editing_name = on;
                 name_label->setVisible(!on);
                 name_edit_button->setVisible(!on);
                 name_edit->setVisible(on);
                 name_apply->setVisible(on);
-                name_remove->setVisible(on && !given.isEmpty());
+                name_remove->setVisible(!given.isEmpty());
                 if (on) {
                     name_edit->setText(given);
                     name_edit->setFocus();

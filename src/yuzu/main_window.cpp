@@ -2091,9 +2091,16 @@ PadBluetooth FindPadBluetooth(SDL_JoystickID id) {
     return {{}, any_bluetooth};
 }
 
-/// True while a controller has a button held, read from its input nodes (kept open)
+/// True while a controller has a button held, or had one pressed in the last 200ms (a quick
+/// tap falls between two checks), read from its input nodes (kept open)
 bool RealButtonHeld(const RealController& controller) {
     static std::map<QString, int> open_nodes;
+    // (When each node's last press happened, by the kernel's own stamp on it: a press read late
+    // is still as old as it is)
+    static std::map<QString, s64> pressed_at_us;
+    timespec real{};
+    clock_gettime(CLOCK_REALTIME, &real);
+    const s64 now_us = static_cast<s64>(real.tv_sec) * 1'000'000 + real.tv_nsec / 1000;
     for (const QString& event : controller.events) {
         auto it = open_nodes.find(event);
         if (it == open_nodes.end()) {
@@ -2104,9 +2111,20 @@ bool RealButtonHeld(const RealController& controller) {
         if (it->second < 0) {
             continue;
         }
-        // (Its queue is not read otherwise: drained so the kernel keeps nothing for it)
-        std::array<char, 1024> drain;
-        while (::read(it->second, drain.data(), drain.size()) > 0) {
+        // Its queue: the presses since the last check (and drained, so the kernel keeps nothing)
+        std::array<input_event, 64> events;
+        ssize_t got = 0;
+        while ((got = ::read(it->second, events.data(), sizeof(events))) > 0) {
+            for (std::size_t k = 0; k < static_cast<std::size_t>(got) / sizeof(input_event); ++k) {
+                if (events[k].type == EV_KEY && events[k].value == 1) {
+                    pressed_at_us[event] = static_cast<s64>(events[k].input_event_sec) * 1'000'000 +
+                                           static_cast<s64>(events[k].input_event_usec);
+                }
+            }
+        }
+        if (const auto pressed = pressed_at_us.find(event);
+            pressed != pressed_at_us.end() && now_us - pressed->second < 200'000) {
+            return true;
         }
         std::array<unsigned char, KEY_MAX / 8 + 1> keys{};
         if (ioctl(it->second, EVIOCGKEY(keys.size()), keys.data()) < 0) {
@@ -3828,15 +3846,19 @@ void MainWindow::LearnBluetoothPads() {
             }
             continue;
         }
+        // A pad's button held now, or pressed in the last 200ms (a quick tap)
+        const auto now_steady = std::chrono::steady_clock::now();
         std::vector<std::pair<u32, std::string>> pressed_pads;
         for (const auto& pad : pads) {
-            if (PadAnyButtonPressed(pad.first)) {
+            const auto last =
+                input_subsystem ? input_subsystem->GetSDLLastActivity(pad.first) : std::nullopt;
+            if (PadAnyButtonPressed(pad.first) ||
+                (last && now_steady - *last < std::chrono::milliseconds{200})) {
                 pressed_pads.push_back(pad);
             }
         }
-        if (pressed_pads.size() != 1) {
-            continue;
-        }
+        // (Every check reads the controllers' queues, so a press is only ever counted when it
+        // happened, never later)
         const RealController* pressed = nullptr;
         int count = 0;
         for (const auto& controller : controllers) {
@@ -3844,6 +3866,9 @@ void MainWindow::LearnBluetoothPads() {
                 pressed = &controller;
                 ++count;
             }
+        }
+        if (pressed_pads.size() != 1) {
+            continue;
         }
         // Debug Probes: why a press didn't tell them apart (at most once a second)
         if (count != 1 && Common::ControllerProbes()) {
@@ -5704,6 +5729,15 @@ void MainWindow::ApplyConsoleControllerMode() {
                 QString name = display.isEmpty() ? raw : display;
                 name.remove(port_number);
                 name.remove(steam_suffix);
+                // (A name given before the address was known moves to it, like the bindings)
+                if (const std::string key = name_key(pad); key.starts_with("bt:")) {
+                    const auto earlier = controller_names.find("id:" + live[pad]);
+                    if (earlier != controller_names.end() && !controller_names.contains(key)) {
+                        controller_names[key] = earlier->second;
+                        controller_names.erase(earlier);
+                        WriteControllerNames(controller_names);
+                    }
+                }
                 const auto given = controller_names.find(name_key(pad));
                 if (given != controller_names.end()) {
                     custom_names[static_cast<std::size_t>(i)] = given->second;
