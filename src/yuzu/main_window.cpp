@@ -3094,12 +3094,13 @@ void MainWindow::RenderControllerOverlay() {
             hinted_leave[i] = row.flash_since;
             // (Removed on the tick it left)
             const bool turned_off = std::abs(row.flash_since - turned_off_at[i]) < 1000;
-            controller_hints.push_back(
-                {overlay_row_name[i], i, false, row.flash_since, turned_off});
+            // (Named after the controller that left: another may have the player already)
+            const QString& left_name =
+                overlay_left_name[i].isEmpty() ? overlay_row_name[i] : overlay_left_name[i];
+            controller_hints.push_back({left_name, i, false, row.flash_since, turned_off});
             if (Common::ControllerProbes()) {
-                LOG_INFO(Frontend, "console-mode: hint \"{} {}\" P{}",
-                         overlay_row_name[i].toStdString(), turned_off ? "turned off" : "left",
-                         i + 1);
+                LOG_INFO(Frontend, "console-mode: hint \"{} {}\" P{}", left_name.toStdString(),
+                         turned_off ? "turned off" : "left", i + 1);
             }
         }
     }
@@ -5836,6 +5837,11 @@ void MainWindow::ApplyConsoleControllerMode() {
                 QString name = display.isEmpty() ? raw : display;
                 name.remove(port_number);
                 name.remove(steam_suffix);
+                if (name == QStringLiteral("SteamDeck")) {
+                    name = QStringLiteral("Steam Deck"); // (Steam's name for the Deck's own)
+                }
+                // (The name of the controller that had the player, should it have just left)
+                const QString previous = overlay_row_name[i];
                 // (A name given before the address was known moves to it, like the bindings)
                 if (const std::string key = name_key(pad); key.starts_with("bt:")) {
                     const auto earlier = controller_names.find("id:" + live[pad]);
@@ -5867,6 +5873,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                         flash = 2;
                         flash_since = now_ms;
                         green_at = now_ms + flash_ms / 2;
+                        overlay_left_name[i] = previous;
                     } else {
                         flash = 1;
                         flash_since = now_ms;
@@ -5879,6 +5886,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 flash = 2;
                 flash_since = now_ms;
                 green_at = 0;
+                overlay_left_name[i] = overlay_row_name[i];
             }
             if (since == 0) {
                 continue;
