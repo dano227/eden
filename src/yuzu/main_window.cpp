@@ -6017,8 +6017,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 pause_done.erase(i); // (a new wait may pause again)
             }
         }
-        const bool running = emulation_running && QtCommon::emu_thread &&
-                             QtCommon::emu_thread->IsRunning();
+        const bool running =
+            emulation_running && QtCommon::emu_thread && QtCommon::emu_thread->IsRunning();
         if (!disconnect_paused.empty() && running) {
             disconnect_paused.clear(); // (resumed by hand)
         }
@@ -6043,8 +6043,8 @@ void MainWindow::ApplyConsoleControllerMode() {
                 OnPauseGame();
             }
         } else if (!disconnect_paused.empty() && !running && emulation_running) {
-            const bool all_back = std::all_of(
-                disconnect_paused.begin(), disconnect_paused.end(), [&](int player) {
+            const bool all_back =
+                std::all_of(disconnect_paused.begin(), disconnect_paused.end(), [&](int player) {
                     return std::any_of(pad_slots.begin(), pad_slots.end(), [&](const auto& e) {
                         return e.second == player && live.contains(e.first);
                     });

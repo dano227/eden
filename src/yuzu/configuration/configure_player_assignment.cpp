@@ -759,8 +759,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
             [](bool on) { Settings::values.console_joycon_auto.SetValue(on); });
 
     layout_group = new QButtonGroup(this);
-    auto* layout_choice = MakeSegmented(gameplay, {tr("By Position"), tr("By Label")}, {0, 1},
-                                        layout_group);
+    auto* layout_choice =
+        MakeSegmented(gameplay, {tr("By Position"), tr("By Label")}, {0, 1}, layout_group);
     add_option(tr("Button Layout"),
                tr("For Xbox and PlayStation style controllers. By Position: the button where the "
                   "Switch has A acts as A. By Label: the button marked A acts as A. Nintendo "
