@@ -105,7 +105,10 @@ void ValveMotion::Scan(std::stop_token stop) {
                     std::sscanf(line.c_str() + 7, "%x:%x:%x", &bus, &vendor, &product);
                 }
             }
-            if (vendor != VendorValve || Family(static_cast<u16>(product)) == FamilyNone) {
+            // Only the Steam Deck for now: a Steam Controller (2026) through its Puck was found
+            // but gave no usable motion, and the original Steam Controller was never tried.
+            // (Their report layouts stay below for when they can be tested.)
+            if (vendor != VendorValve || Family(static_cast<u16>(product)) != FamilyDeck) {
                 continue;
             }
             const std::string path = "/dev/" + entry.path().filename().string();

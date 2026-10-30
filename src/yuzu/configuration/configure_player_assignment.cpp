@@ -656,9 +656,9 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
         new QLabel(tr("Read Valve Controllers Directly (Experimental)"), steam_box);
     reader_title->setFont(title_font);
     auto* reader_note = new QLabel(
-        tr("Reads the motion of the Steam Deck and Steam Controllers straight from the "
-           "controller, so nothing competes with Steam for them. Try this if a Steam Controller "
-           "misbehaves under Steam. Turns Bypass Steam Input off, and the other way round."),
+        tr("Reads the Steam Deck's motion straight from its controls, so nothing competes with "
+           "Steam for them. Steam Controllers aren't supported yet: use Bypass Steam Input for "
+           "them. Turns Bypass Steam Input off, and the other way round."),
         steam_box);
     reader_note->setWordWrap(true);
     reader_note->setObjectName(QStringLiteral("note"));
@@ -666,7 +666,7 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     reader_text->addWidget(reader_note);
     reader_layout->addLayout(reader_text, 1);
     reader_switch = new ToggleSwitch(steam_box);
-    reader_switch->setToolTip(tr("On: Eden reads Valve controllers' motion directly"));
+    reader_switch->setToolTip(tr("On: Eden reads the Steam Deck's motion directly"));
     reader_layout->addWidget(reader_switch, 0, Qt::AlignVCenter);
     steam_column->addLayout(reader_layout);
     steam_column->addWidget(steam_restart);
@@ -933,6 +933,9 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
               tr("For a handheld PC with built-in controls. The same as Modern Console, but the "
                  "built-in controls always come last: connect a controller and it becomes "
                  "Player 1, so a docked handheld plays like a console."));
+    add_about(tr("Steam Controller"),
+              tr("Under Steam, turn on Bypass Steam Input (Steam Input card) so Eden reads the "
+                 "Steam Controller itself. Steam Input layouts then don't apply in Eden."));
     layout->addWidget(about);
     layout->addStretch(1);
 
