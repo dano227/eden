@@ -72,6 +72,16 @@ void ConfigureApplets::Setup(const ConfigurationShared::Builder& builder) {
             continue;
         }
 
+        // The Modern Console options are the Controllers tab's (and a game's Modern Console tab)
+        if (setting->Id() == Settings::values.console_debug_overlay.Id() ||
+            setting->Id() == Settings::values.console_hints.Id() ||
+            setting->Id() == Settings::values.console_joycon_auto.Id() ||
+            setting->Id() == Settings::values.console_pause_disconnect.Id() ||
+            setting->Id() == Settings::values.console_player_lights.Id() ||
+            setting->Id() == Settings::values.console_button_labels.Id()) {
+            widget->deleteLater();
+            continue;
+        }
         // Untested applets
         if (setting->Id() == Settings::values.data_erase_applet_mode.Id() ||
             setting->Id() == Settings::values.net_connect_applet_mode.Id() ||
