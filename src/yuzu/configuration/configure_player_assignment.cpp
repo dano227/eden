@@ -724,33 +724,73 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     now_layout->addWidget(players_note);
     layout->addWidget(now_box);
 
-    // Games that only take Joy-Cons: players' controllers act as Joy-Cons
-    auto* joycon_box_widget = new QGroupBox(tr("Joy-Con Games"), this);
-    joycon_box = joycon_box_widget;
-    auto* joycon_line = new QHBoxLayout(joycon_box_widget);
-    auto* joycon_text = new QVBoxLayout();
-    joycon_text->setSpacing(1);
-    auto* joycon_title = new QLabel(tr("Use Any Controller as Joy-Cons"), joycon_box_widget);
-    QFont joycon_font = joycon_title->font();
-    joycon_font.setBold(true);
-    joycon_title->setFont(joycon_font);
-    auto* joycon_note = new QLabel(
-        tr("When a game only takes Joy-Cons, such as one Joy-Con per player, your controllers "
-           "act as Joy-Cons automatically, with the buttons arranged to fit. A controller type "
-           "picked in a player's tab is left as it is."),
-        joycon_box_widget);
-    joycon_note->setWordWrap(true);
-    joycon_note->setObjectName(QStringLiteral("note"));
-    joycon_text->addWidget(joycon_title);
-    joycon_text->addWidget(joycon_note);
-    joycon_line->addLayout(joycon_text, 1);
-    joycon_switch = new ToggleSwitch(joycon_box_widget);
-    joycon_line->addWidget(joycon_switch, 0, Qt::AlignVCenter);
+    // Gameplay: how players' controllers behave in games
+    auto* gameplay = new QGroupBox(tr("Gameplay"), this);
+    joycon_box = gameplay;
+    auto* gameplay_layout = new QVBoxLayout(gameplay);
+    // A title, a line about it, and its control on the right
+    const auto add_option = [gameplay, gameplay_layout](const QString& title, const QString& note,
+                                                        QWidget* control) {
+        auto* line = new QHBoxLayout();
+        auto* text = new QVBoxLayout();
+        text->setSpacing(1);
+        auto* title_label = new QLabel(title, gameplay);
+        QFont font = title_label->font();
+        font.setBold(true);
+        title_label->setFont(font);
+        auto* note_label = new QLabel(note, gameplay);
+        note_label->setWordWrap(true);
+        note_label->setObjectName(QStringLiteral("note"));
+        text->addWidget(title_label);
+        text->addWidget(note_label);
+        line->addLayout(text, 1);
+        line->addWidget(control, 0, Qt::AlignVCenter);
+        gameplay_layout->addLayout(line);
+    };
+    joycon_switch = new ToggleSwitch(gameplay);
+    add_option(tr("Use Any Controller as Joy-Cons"),
+               tr("When a game only takes Joy-Cons, such as one Joy-Con per player, your "
+                  "controllers act as Joy-Cons automatically, with the buttons arranged to fit. A "
+                  "controller type picked in a player's tab is left as it is."),
+               joycon_switch);
     original_joycon = Settings::values.console_joycon_auto.GetValue();
     joycon_switch->setChecked(original_joycon);
     connect(joycon_switch, &QAbstractButton::toggled, this,
             [](bool on) { Settings::values.console_joycon_auto.SetValue(on); });
-    layout->addWidget(joycon_box_widget);
+
+    layout_group = new QButtonGroup(this);
+    auto* layout_choice = MakeSegmented(gameplay, {tr("By Position"), tr("By Label")}, {0, 1},
+                                        layout_group);
+    add_option(tr("Button Layout"),
+               tr("For Xbox and PlayStation style controllers. By Position: the button where the "
+                  "Switch has A acts as A. By Label: the button marked A acts as A. Nintendo "
+                  "controllers already match both ways."),
+               layout_choice);
+    original_labels = Settings::values.console_button_labels.GetValue();
+    layout_group->button(original_labels ? 1 : 0)->setChecked(true);
+    connect(layout_group, &QButtonGroup::idClicked, this,
+            [](int id) { Settings::values.console_button_labels.SetValue(id == 1); });
+
+    pause_switch = new ToggleSwitch(gameplay);
+    add_option(tr("Pause When a Controller Disconnects"),
+               tr("Pauses the game when a player's controller has been gone for 3 seconds, and "
+                  "resumes when a controller takes that player again."),
+               pause_switch);
+    original_pause = Settings::values.console_pause_disconnect.GetValue();
+    pause_switch->setChecked(original_pause);
+    connect(pause_switch, &QAbstractButton::toggled, this,
+            [](bool on) { Settings::values.console_pause_disconnect.SetValue(on); });
+
+    lights_switch = new ToggleSwitch(gameplay);
+    add_option(tr("Player Lights"),
+               tr("Controllers' player lights and light bars show their player, in its colour. "
+                  "Under Steam, Steam sets the lights of the controllers it handles."),
+               lights_switch);
+    original_lights = Settings::values.console_player_lights.GetValue();
+    lights_switch->setChecked(original_lights);
+    connect(lights_switch, &QAbstractButton::toggled, this,
+            [](bool on) { Settings::values.console_player_lights.SetValue(on); });
+    layout->addWidget(gameplay);
 
     // What shows over the game: a title, a line about it and a switch per item
     auto* display = new QGroupBox(tr("On-Screen Display"), this);
@@ -940,6 +980,9 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
         Settings::values.console_debug_probes.SetValue(original_probes);
         Settings::values.console_bypass_steam.SetValue(original_bypass);
         Settings::values.console_joycon_auto.SetValue(original_joycon);
+        Settings::values.console_button_labels.SetValue(original_labels);
+        Settings::values.console_pause_disconnect.SetValue(original_pause);
+        Settings::values.console_player_lights.SetValue(original_lights);
         Settings::values.console_valve_reader.SetValue(original_reader);
     }
 }
