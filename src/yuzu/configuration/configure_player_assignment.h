@@ -92,6 +92,10 @@ private:
     QAbstractButton* steam_switch = nullptr;
     QLabel* steam_restart = nullptr;
     bool original_bypass = false;
+    /// Use Any Controller as Joy-Cons, in its own card
+    QWidget* joycon_box = nullptr;
+    QAbstractButton* joycon_switch = nullptr;
+    bool original_joycon = true;
     /// Read Valve Controllers Directly (experimental), in the same card
     QAbstractButton* reader_switch = nullptr;
     bool original_reader = false;

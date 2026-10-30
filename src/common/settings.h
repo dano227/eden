@@ -234,6 +234,10 @@ struct Values {
     /// (Bluetooth controllers by address, the handheld's own), as key=name;key=name
     Setting<std::string> console_controller_names{
         linkage, std::string{}, "console_controller_names", Category::LibraryApplet};
+    /// Modern Console: when a game only takes Joy-Cons, players' controllers act as Joy-Cons (Dual
+    /// Joy-Cons, or a single one held sideways with the buttons arranged to fit)
+    SwitchableSetting<bool> console_joycon_auto{linkage, true, "console_joycon_auto",
+                                                Category::LibraryApplet};
     /// Detailed controller traces in the log (every assignment tick), for bug reports. The
     /// devices are described either way (what adding a handheld to the allowlist needs).
     SwitchableSetting<bool> console_debug_probes{linkage, false, "console_debug_probes",

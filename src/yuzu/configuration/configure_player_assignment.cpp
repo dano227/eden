@@ -693,6 +693,34 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     now_layout->addWidget(players_note);
     layout->addWidget(now_box);
 
+    // Games that only take Joy-Cons: players' controllers act as Joy-Cons
+    auto* joycon_box_widget = new QGroupBox(tr("Joy-Con Games"), this);
+    joycon_box = joycon_box_widget;
+    auto* joycon_line = new QHBoxLayout(joycon_box_widget);
+    auto* joycon_text = new QVBoxLayout();
+    joycon_text->setSpacing(1);
+    auto* joycon_title = new QLabel(tr("Use Any Controller as Joy-Cons"), joycon_box_widget);
+    QFont joycon_font = joycon_title->font();
+    joycon_font.setBold(true);
+    joycon_title->setFont(joycon_font);
+    auto* joycon_note = new QLabel(
+        tr("When a game only takes Joy-Cons, such as one Joy-Con per player, your controllers "
+           "act as Joy-Cons automatically, with the buttons arranged to fit. A controller type "
+           "picked in a player's tab is left as it is."),
+        joycon_box_widget);
+    joycon_note->setWordWrap(true);
+    joycon_note->setObjectName(QStringLiteral("note"));
+    joycon_text->addWidget(joycon_title);
+    joycon_text->addWidget(joycon_note);
+    joycon_line->addLayout(joycon_text, 1);
+    joycon_switch = new ToggleSwitch(joycon_box_widget);
+    joycon_line->addWidget(joycon_switch, 0, Qt::AlignVCenter);
+    original_joycon = Settings::values.console_joycon_auto.GetValue();
+    joycon_switch->setChecked(original_joycon);
+    connect(joycon_switch, &QAbstractButton::toggled, this,
+            [](bool on) { Settings::values.console_joycon_auto.SetValue(on); });
+    layout->addWidget(joycon_box_widget);
+
     // What shows over the game: a title, a line about it and a switch per item
     auto* display = new QGroupBox(tr("On-Screen Display"), this);
     display_box = display;
@@ -880,6 +908,7 @@ ConfigurePlayerAssignment::~ConfigurePlayerAssignment() {
         Settings::values.console_history_gaps.SetValue(original_history_gaps);
         Settings::values.console_debug_probes.SetValue(original_probes);
         Settings::values.console_bypass_steam.SetValue(original_bypass);
+        Settings::values.console_joycon_auto.SetValue(original_joycon);
         Settings::values.console_valve_reader.SetValue(original_reader);
     }
 }
@@ -958,6 +987,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     }
     now_box->setVisible(automatic);
     display_box->setVisible(automatic);
+    joycon_box->setVisible(automatic);
     about_box->setVisible(automatic);
     debug_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);

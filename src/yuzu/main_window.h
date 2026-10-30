@@ -705,6 +705,10 @@ private:
     std::array<std::string, 10> overlay_custom_name{};
     /// The name of the controller that last left each player, for its hint
     std::array<QString, 10> overlay_left_name{};
+    /// Use Any Controller as Joy-Cons: each player's type before the engine changed it for a game
+    /// that only takes Joy-Cons, and the type it set (a type set by hand is left alone)
+    std::array<std::optional<Settings::ControllerType>, 10> joycon_auto_from{};
+    std::array<std::optional<Settings::ControllerType>, 10> joycon_auto_set{};
     int overlay_edit_player = -1;
     QString overlay_edit_text;
     /// The player whose tab the next settings dialog opens on (-1: as usual)
@@ -740,6 +744,8 @@ private:
         qint64 at;
         /// Left because Turn Off turned its controller off
         bool turned_off = false;
+        /// Said instead of joined / left ("" none): how the player's controller changed
+        QString note;
     };
     std::vector<ControllerHint> controller_hints;
     /// The flashes already turned into hints, per player (green, red)
