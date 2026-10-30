@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <cassert>
+#include "common/assert.h"
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/constant_pool.h"
 
@@ -26,6 +27,10 @@ Xbyak::Address ConstantPool::GetConstant(BlockOfCode& code, const Xbyak::Address
     auto const val = u32(constant_info.size());
     auto const [it, _] = constant_info.insert({key, val});
     // if it != constant_info.end(): assume(pool[it->second] == c);
+    // A full pool would write the constant over the code that follows it
+    if (it->second >= pool.size()) [[unlikely]] {
+        UNREACHABLE_MSG("Constant pool full ({} constants)", pool.size());
+    }
     pool[it->second] = u128{lo, hi};
     return frame[code.rip + std::addressof(pool[it->second])];
 }
