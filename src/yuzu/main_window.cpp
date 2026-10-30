@@ -3676,7 +3676,10 @@ void MainWindow::LearnBluetoothPads() {
         SDL_JoystickID* ids = SDL_GetGamepads(&count);
         for (int i = 0; i < count; ++i) {
             const u32 id = ids[i];
-            if (Common::SteamPadsInUse() && !IsSteamVirtualPad(id)) {
+            // (Not a real device Steam hid: its virtual pad is the player)
+            if (Common::SteamPadsInUse() && !IsSteamVirtualPad(id) &&
+                Common::SteamHidModel(SDL_GetJoystickVendorForID(id),
+                                      SDL_GetJoystickProductForID(id))) {
                 continue;
             }
             std::string key = BluetoothKey(id);
@@ -4015,6 +4018,10 @@ void MainWindow::ApplyConsoleControllerMode() {
         const JoystickApiLock lock;
         int count = 0;
         SDL_JoystickID* ids = SDL_GetGamepads(&count);
+        // Steam's virtual pads around: none when Steam Input is off for Eden, which then works
+        // as launched outside Steam
+        Common::GetControllerConsoleState().steam_pads_present =
+            std::any_of(ids, ids + count, [](SDL_JoystickID id) { return IsSteamVirtualPad(id); });
         for (int i = 0; i < count; ++i) {
             const u32 id = ids[i];
             present.insert(id);
@@ -4024,9 +4031,12 @@ void MainWindow::ApplyConsoleControllerMode() {
             if (Common::GetControllerConsoleState().steam_bypassed && IsSteamVirtualPad(id)) {
                 continue;
             }
-            if (Common::SteamPadsInUse() && !IsSteamVirtualPad(id)) {
-                // A real device next to Steam's virtual pads, unhidden for its motion: never a
-                // player; logged once, with the virtual pads of the same model
+            // A real device next to Steam's virtual pads that Steam hid, opened again for its
+            // motion: never a player; logged once, with the virtual pads of the same model. (A
+            // controller Steam leaves alone plays as itself.)
+            if (Common::SteamPadsInUse() && !IsSteamVirtualPad(id) &&
+                Common::SteamHidModel(SDL_GetJoystickVendorForID(id),
+                                      SDL_GetJoystickProductForID(id))) {
                 motion_devices.push_back(id);
                 // (Only marked once logged: Debug Probes turned on later still describes it)
                 static std::set<u32> probed;
@@ -4052,7 +4062,7 @@ void MainWindow::ApplyConsoleControllerMode() {
                 continue;
             }
             std::string ident = PadIdentity(id);
-            if (Common::SteamPadsInUse()) {
+            if (Common::SteamPadsInUse() && IsSteamVirtualPad(id)) {
                 if (const Uint64 handle = PadSteamHandle(id)) {
                     ident = fmt::format("steamhandle:{:#x}", handle);
                 } else if (now - first_seen[id] < std::chrono::seconds{3}) {

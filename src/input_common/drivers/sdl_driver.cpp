@@ -830,6 +830,11 @@ void UnhideMotionControllers() {
             !(ValveMotion::Enabled() && vendor == 0x28DE && ValveMotion::Family(product) != 0)) {
             dropped += entry + ',';
             UnhiddenControllers().insert(vendor << 16 | product);
+            {
+                auto& state = Common::GetControllerConsoleState();
+                std::scoped_lock lock{state.mutex};
+                state.steam_hidden_models.insert(vendor << 16 | product);
+            }
             continue;
         }
         kept += entry + ',';
