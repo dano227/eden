@@ -20,7 +20,7 @@ namespace InputCommon {
 /**
  * Reads the motion of Valve's controllers straight from their raw reports, next to Steam, which
  * keeps them: nothing is sent to them but the request to turn their motion sensors on while they
- * are silent. Only the Steam Deck is read for now (Steam Controllers untested, see Scan).
+ * are silent. Reads the Steam Deck and the Steam Controller (2026) (see Scan).
  * Experimental (Read Valve Controllers Directly), under Steam in Modern Console; Linux only.
  */
 class ValveMotion final : public InputEngine {
