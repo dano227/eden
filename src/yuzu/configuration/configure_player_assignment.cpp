@@ -170,6 +170,37 @@ protected:
     }
 };
 
+/// A controller's battery: a small cell filled to its charge (red when low, a bolt while it
+/// charges), as the overlay draws it
+QPixmap BatteryIcon(int percent, bool charging) {
+    QPixmap pixmap(QSize(20, 12) * 2);
+    pixmap.setDevicePixelRatio(2);
+    pixmap.fill(Qt::transparent);
+    QPainter painter{&pixmap};
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QRectF cell(1, 2, 15, 8);
+    painter.setPen(QPen(QColor(150, 155, 162), 1.2));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(cell, 2, 2);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(150, 155, 162));
+    painter.drawRect(QRectF(cell.right() + 0.6, cell.center().y() - 1.5, 1.8, 3));
+    painter.setBrush(percent <= 15 && !charging ? QColor(220, 60, 60) : QColor(70, 180, 100));
+    painter.drawRect(QRectF(cell.left() + 1.5, cell.top() + 1.5,
+                            (cell.width() - 3) * (std::clamp)(percent, 0, 100) / 100.0,
+                            cell.height() - 3));
+    if (charging) {
+        painter.setPen(QPen(Qt::white, 1.2));
+        const QPointF c = cell.center();
+        const QPointF bolt[3] = {QPointF(c.x() + 1, c.y() - 3), QPointF(c.x() - 1.5, c.y() + 0.5),
+                                 QPointF(c.x() + 1.5, c.y() - 0.5)};
+        painter.drawPolyline(bolt, 3);
+        painter.drawLine(bolt[2], QPointF(c.x() - 1, c.y() + 3));
+    }
+    painter.end();
+    return pixmap;
+}
+
 /// The icons of a player's name: edit (a pencil), apply (a check) and remove (a bin), drawn so
 /// they look the same everywhere
 QIcon NameIcon(int kind, const QColor& color) {
@@ -1168,7 +1199,9 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
             QLatin1Char('/') + QString::fromStdString(entry.profile) +
             (entry.leaving ? QStringLiteral("x") : QString{}) + QString::number(entry.turn_off) +
             QLatin1Char('/') + QString::number(entry.origin) +
-            (entry.guessed ? QStringLiteral("?") : QString{}) + QLatin1Char('|');
+            (entry.guessed ? QStringLiteral("?") : QString{}) + QLatin1Char('/') +
+            QString::number(entry.battery / 5) +
+            (entry.charging ? QStringLiteral("c") : QString{}) + QLatin1Char('|');
     }
     if (!handheld_has_player) {
         signature += QStringLiteral("h:") + QString::fromStdString(handheld_name);
@@ -1300,9 +1333,29 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                 editing(false);
                 request(QString{});
             });
+            // The controller's battery, when it tells its charge
+            QLabel* battery = nullptr;
+            if (entry.battery >= 0 && !entry.leaving) {
+                battery = new QLabel(row);
+                battery->setPixmap(BatteryIcon(entry.battery, entry.charging));
+                battery->setText(QString{});
+                battery->setToolTip(entry.charging ? tr("Battery %1% (charging)").arg(entry.battery)
+                                                   : tr("Battery %1%").arg(entry.battery));
+            }
+            auto* battery_text =
+                battery ? new QLabel(QStringLiteral("%1%").arg(entry.battery), row) : nullptr;
+            if (battery_text) {
+                battery_text->setObjectName(QStringLiteral("note"));
+                battery_text->setToolTip(battery->toolTip());
+            }
             auto* name_line = new QHBoxLayout();
             name_line->setSpacing(2);
             name_line->addWidget(name_label);
+            if (battery) {
+                name_line->addSpacing(6);
+                name_line->addWidget(battery);
+                name_line->addWidget(battery_text);
+            }
             name_line->addWidget(name_edit, 1);
             name_line->addWidget(name_edit_button);
             name_line->addWidget(name_apply);

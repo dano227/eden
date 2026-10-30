@@ -2458,6 +2458,92 @@ void BindSidewaysJoyCon(Settings::PlayerInput& set, bool right) {
     }
 }
 
+/// A battery as Linux lists it (/sys/class/power_supply): its charge (the level's words when it
+/// gives no percent) and whether it charges
+#ifdef __linux__
+std::optional<std::pair<int, bool>> ReadPowerSupply(const QString& dir) {
+    const auto read = [&](const char* name) {
+        QFile file{dir + QLatin1Char('/') + QLatin1String(name)};
+        return file.open(QIODevice::ReadOnly) ? QString::fromLatin1(file.readAll()).trimmed()
+                                              : QString{};
+    };
+    int percent = -1;
+    bool ok = false;
+    if (const int capacity = read("capacity").toInt(&ok); ok) {
+        percent = capacity;
+    } else {
+        const QString level = read("capacity_level");
+        percent = level == QStringLiteral("Full")       ? 100
+                  : level == QStringLiteral("High")     ? 75
+                  : level == QStringLiteral("Normal")   ? 50
+                  : level == QStringLiteral("Low")      ? 15
+                  : level == QStringLiteral("Critical") ? 5
+                                                        : -1;
+    }
+    if (percent < 0) {
+        return std::nullopt;
+    }
+    const QString status = read("status");
+    return std::pair{percent,
+                     status == QStringLiteral("Charging") || status == QStringLiteral("Full")};
+}
+
+/// A Bluetooth controller's battery, by its address: Linux names it after the address
+/// (hid-<address>-battery), or its device carries the address
+std::optional<std::pair<int, bool>> BluetoothBattery(const std::string& address) {
+    const QDir supplies{QStringLiteral("/sys/class/power_supply")};
+    const QString wanted = QString::fromStdString(address).toLower();
+    for (const QString& name : supplies.entryList(QDir::AllEntries | QDir::NoDotAndDotDot)) {
+        const QString dir = supplies.filePath(name);
+        bool match = name.toLower().contains(wanted);
+        if (!match) {
+            if (const auto entry =
+                    ReadHidEntry(QFileInfo{dir + QStringLiteral("/device")}.canonicalFilePath())) {
+                match = entry->address == address;
+            }
+        }
+        if (match) {
+            return ReadPowerSupply(dir);
+        }
+    }
+    return std::nullopt;
+}
+
+/// The system's own battery (the handheld's own controls run on it)
+std::optional<std::pair<int, bool>> SystemBattery() {
+    const QDir supplies{QStringLiteral("/sys/class/power_supply")};
+    for (const QString& name : supplies.entryList({QStringLiteral("BAT*")}, QDir::AllEntries)) {
+        if (const auto battery = ReadPowerSupply(supplies.filePath(name))) {
+            return battery;
+        }
+    }
+    return std::nullopt;
+}
+#endif
+
+/// What SDL knows of a pad's battery: percent (-1 unknown), charging, wired
+std::tuple<int, bool, bool> SdlBattery(SDL_JoystickID id) {
+    const JoystickApiLock lock;
+    SDL_Joystick* js = SDL_OpenJoystick(id);
+    if (!js) {
+        return {-1, false, false};
+    }
+    int percent = -1;
+    const SDL_PowerState state = SDL_GetJoystickPowerInfo(js, &percent);
+    SDL_CloseJoystick(js);
+    switch (state) {
+    case SDL_POWERSTATE_ON_BATTERY:
+        return {percent, false, false};
+    case SDL_POWERSTATE_CHARGING:
+    case SDL_POWERSTATE_CHARGED:
+        return {percent, true, false};
+    case SDL_POWERSTATE_NO_BATTERY:
+        return {-1, false, true};
+    default:
+        return {-1, false, false};
+    }
+}
+
 /// A pad's USB product id, under the same lock as the rest of the API use.
 Uint16 PadProduct(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -3349,7 +3435,12 @@ void MainWindow::RenderControllerOverlay() {
     if (overlay_edit_player >= 0) {
         name_w = (std::max)(name_w, name_fm.horizontalAdvance(QString(16, QLatin1Char('M'))));
     }
-    const int controller_w = inner + badge_w + 8 + name_w + inner + 4;
+    // Room for a battery after the name, when any controller tells its charge
+    const bool batteries = std::any_of(overlay_rows.begin(), overlay_rows.end(),
+                                       [](const auto& row) { return row.battery >= 0; });
+    const int battery_w =
+        batteries ? 8 + 16 + 4 + chip_fm.horizontalAdvance(QStringLiteral("100%")) : 0;
+    const int controller_w = inner + badge_w + 8 + name_w + battery_w + inner + 4;
     // Room for as many of the widest chips as the history keeps (and the times between them),
     // so the image keeps its size as the bubbles change; without the history, room for a
     // hovered row's buttons
@@ -3439,6 +3530,37 @@ void MainWindow::RenderControllerOverlay() {
         painter.setPen(gone ? QColor(255, 255, 255, 120) : QColor(240, 240, 240));
         painter.drawText(QRect(1 + inner + badge_w + 8, at_y, name_w + 4, row_h),
                          Qt::AlignVCenter | Qt::AlignLeft, overlay_row_name[row.player]);
+        // The battery: a small cell filled to its charge (red when low, a bolt while charging)
+        if (!gone && row.battery >= 0) {
+            const double bx = 1 + inner + badge_w + 8 + name_w + 8;
+            const QRectF cell(bx, at_y + row_h / 2.0 - 4, 14, 8);
+            const QColor charge =
+                row.battery <= 15 && !row.charging ? QColor(235, 70, 70) : QColor(120, 220, 140);
+            painter.setPen(QPen(QColor(230, 230, 230), 1.2));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRoundedRect(cell, 2, 2);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(230, 230, 230));
+            painter.drawRect(QRectF(cell.right() + 0.6, cell.center().y() - 1.5, 1.6, 3));
+            painter.setBrush(charge);
+            painter.drawRect(QRectF(cell.left() + 1.5, cell.top() + 1.5,
+                                    (cell.width() - 3) * (std::clamp)(row.battery, 0, 100) / 100.0,
+                                    cell.height() - 3));
+            if (row.charging) {
+                painter.setPen(QPen(QColor(14, 14, 18), 1.2));
+                const QPointF c = cell.center();
+                const QPointF bolt[3] = {QPointF(c.x() + 1, c.y() - 3),
+                                         QPointF(c.x() - 1.5, c.y() + 0.5),
+                                         QPointF(c.x() + 1.5, c.y() - 0.5)};
+                painter.drawPolyline(bolt, 3);
+                painter.drawLine(bolt[2], QPointF(c.x() - 1, c.y() + 3));
+            }
+            painter.setFont(chip_font);
+            painter.setPen(QColor(220, 220, 220));
+            painter.drawText(QRectF(cell.right() + 5, at_y, 40, row_h),
+                             Qt::AlignVCenter | Qt::AlignLeft,
+                             QStringLiteral("%1%").arg(row.battery));
+        }
         painter.setPen(Qt::NoPen);
     };
     // The buttons of a name being typed, where the history goes: apply, remove the name (when
@@ -5940,6 +6062,7 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
         std::array<std::string, 10> custom_names{};
         overlay_rows.clear();
+        std::erase_if(battery_read, [&](const auto& e) { return !live.contains(e.first); });
         std::vector<Common::ControllerConsoleState::PlayerRow> tab_rows;
         // Flashes follow the controller behind a player, not just the player: in handheld mode
         // P1 stays connected while the controller behind it changes. Green when a controller
@@ -6043,13 +6166,50 @@ void MainWindow::ApplyConsoleControllerMode() {
             if (flash != 0 && gone == 0 && green_at == 0 && now_ms - flash_since >= flash_ms) {
                 flash = 0;
             }
+            // Its controller's battery: a Bluetooth controller's own (by address), the handheld's
+            // own controls run on the system's, else what SDL knows. Read every 10 seconds.
+            Battery battery;
+            if (pad) {
+                auto& read = battery_read[pad];
+                if (read.first == 0 || now_ms - read.first > 10'000) {
+                    Battery fresh;
+                    const auto [percent, charging, wired] = SdlBattery(pad);
+                    fresh = {percent, charging, wired};
+#ifdef __linux__
+                    std::optional<std::pair<int, bool>> found;
+                    if (builtin_valid && pad == builtin_match_id) {
+                        found = SystemBattery();
+                    } else if (const auto address = inst_address.find(pad);
+                               address != inst_address.end()) {
+                        found = BluetoothBattery(address->second);
+                    }
+                    if (found) {
+                        fresh = {found->first, found->second, false};
+                    }
+#endif
+                    read = {now_ms, fresh};
+                }
+                battery = read.second;
+                // A low battery, once a session per controller: named on screen
+                const std::string key = name_key(pad);
+                if (battery.percent >= 0 && battery.percent <= 15 && !battery.charging &&
+                    battery_low_told.insert(key).second) {
+                    controller_hints.push_back({QString{}, i, false, now_ms, false,
+                                                tr("%1: battery low (%2%)")
+                                                    .arg(overlay_row_name[i])
+                                                    .arg(battery.percent)});
+                    LOG_INFO(Frontend, "console-mode: P{} battery low ({}%)", i + 1,
+                             battery.percent);
+                }
+            }
             const auto started = pad ? pad_origin.find(pad) : pad_origin.end();
             const int origin =
                 started != pad_origin.end() && started->second != i ? started->second : -1;
             const bool guessed = pad && pad_guessed.contains(pad);
             overlay_rows.push_back({i,
                                     QStringLiteral("P%1: %2").arg(i + 1).arg(overlay_row_name[i]),
-                                    gone != 0 ? 0u : pad, flash, flash_since, origin, guessed});
+                                    gone != 0 ? 0u : pad, flash, flash_since, origin, guessed,
+                                    battery.percent, battery.charging});
             const std::string key = pad ? BluetoothKey(pad) : std::string{};
             const auto address = pad_bluetooth.find(key);
             const int turn_off = address != pad_bluetooth.end() && !address->second.empty() ? 2
@@ -6060,7 +6220,8 @@ void MainWindow::ApplyConsoleControllerMode() {
             tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
                                 flash_since, ConsoleBindingSets()[slot_set[i]].profile_name,
                                 turn_off, origin, guessed,
-                                custom_names[static_cast<std::size_t>(i)]});
+                                custom_names[static_cast<std::size_t>(i)], battery.percent,
+                                battery.charging, battery.wired});
         }
         {
             std::string handheld_name;
