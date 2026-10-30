@@ -5817,6 +5817,13 @@ void MainWindow::ApplyConsoleControllerMode() {
                     want.motions[index] = param.Serialize();
                 }
                 want.profile_name.clear();
+                // Kept as the set's mapping for the session: built again every tick, it asks
+                // the device for its sensors each time and comes out different once a game
+                // polls them, rewriting the player (and reloading the input) four times a second
+                auto& own = SessionSet(set_index);
+                own.buttons = want.buttons;
+                own.analogs = want.analogs;
+                own.motions = want.motions;
                 static std::set<u32> defaulted;
                 if (defaulted.insert(id).second) {
                     LOG_INFO(Frontend,
