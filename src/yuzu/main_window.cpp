@@ -82,11 +82,16 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QUrl>
+#include <QVBoxLayout>
 #ifdef __linux__
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -3355,7 +3360,7 @@ void MainWindow::RenderControllerOverlay() {
         const int below = neighbour(r, 1);
         const int count_round = (above >= 0 ? 1 : 0) + (below >= 0 ? 1 : 0);
         const double x0 = 1 + controller_w + bubble_gap;
-        const double pill_w = 4 + count_round * (round_w + chip_gap) + config_w +
+        const double pill_w = 4 + (count_round + 1) * (round_w + chip_gap) + config_w +
                               (turns_off ? chip_gap + remove_w : 0) + 4;
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(14, 14, 18, 200));
@@ -3387,6 +3392,18 @@ void MainWindow::RenderControllerOverlay() {
         }
         if (below >= 0) {
             arrow(1, below);
+        }
+        // Rename: a pencil, opening a small dialog for the name
+        {
+            const QRectF rect = add(round_w, 3, -1);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(255, 255, 255, 40));
+            painter.drawEllipse(rect.center(), h / 2.0, h / 2.0);
+            const QPointF c = rect.center();
+            painter.setPen(QPen(Qt::white, 1.6, Qt::SolidLine, Qt::RoundCap));
+            painter.drawLine(QPointF(c.x() - 4, c.y() + 4), QPointF(c.x() + 3, c.y() - 3));
+            painter.drawLine(QPointF(c.x() + 1.5, c.y() - 4.5), QPointF(c.x() + 4.5, c.y() - 1.5));
+            painter.setPen(Qt::NoPen);
         }
         // Config: the player's tab in the controls settings
         {
@@ -3639,7 +3656,10 @@ bool MainWindow::HandleOverlayMouse(QEvent* event) {
             overlay_button_down = true;
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
-            if (button->action == 2) {
+            if (button->action == 3) {
+                const int player = button->player;
+                QTimer::singleShot(0, this, [this, player] { RenameFromOverlay(player); });
+            } else if (button->action == 2) {
                 // (After the event: the dialog runs its own loop)
                 const int player = button->player;
                 QTimer::singleShot(0, this, [this, player] {
@@ -3710,6 +3730,38 @@ bool MainWindow::HandleOverlayMouse(QEvent* event) {
         state.rumble_requests.push_back(player);
     }
     return true;
+}
+
+void MainWindow::RenameFromOverlay(int player) {
+    QDialog dialog{this};
+    dialog.setWindowTitle(tr("Name P%1's Controller").arg(player + 1));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* field = new QLineEdit(
+        QString::fromStdString(overlay_custom_name[static_cast<std::size_t>(player)]), &dialog);
+    field->setMaxLength(16);
+    field->setPlaceholderText(tr("Name this controller"));
+    field->selectAll();
+    layout->addWidget(field);
+    auto* buttons = new QDialogButtonBox(&dialog);
+    buttons->addButton(tr("Apply"), QDialogButtonBox::AcceptRole);
+    auto* remove = buttons->addButton(tr("Remove Name"), QDialogButtonBox::DestructiveRole);
+    buttons->addButton(QDialogButtonBox::Cancel);
+    remove->setEnabled(!overlay_custom_name[static_cast<std::size_t>(player)].empty());
+    layout->addWidget(buttons);
+    bool removing = false;
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(remove, &QPushButton::clicked, &dialog, [&] {
+        removing = true;
+        dialog.accept();
+    });
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    auto& state = Common::GetControllerConsoleState();
+    std::scoped_lock lock{state.mutex};
+    state.rename_requests.emplace_back(player, removing ? std::string{}
+                                                        : field->text().trimmed().toStdString());
 }
 
 bool MainWindow::OverlayAnimating() const {
@@ -5717,6 +5769,8 @@ void MainWindow::ApplyConsoleControllerMode() {
             const int turn_off = address != pad_bluetooth.end() && !address->second.empty() ? 2
                                  : pad_bt_pending.contains(key)                             ? 1
                                                                                             : 0;
+            overlay_custom_name[static_cast<std::size_t>(i)] =
+                custom_names[static_cast<std::size_t>(i)];
             tab_rows.push_back({i, overlay_row_name[i].toStdString(), false, gone != 0, flash,
                                 flash_since, ConsoleBindingSets()[slot_set[i]].profile_name,
                                 turn_off, origin, guessed,

@@ -141,55 +141,71 @@ QIcon PowerIcon() {
 
 /// One player in the list: a click rumbles its controller, and a long press (or a drag) picks
 /// it up to drop on another player, which swaps the two
-/// A player's name that edits in place: it reads like a label ("John (Xbox)", or the
-/// controller's own name), and a click edits the name given to the controller. Enter or
-/// clicking away keeps it, Esc puts it back; an empty name takes it off.
+/// The edit field of a player's name: Enter applies and Esc cancels without reaching the
+/// dialog (whose default button Enter would press), and leaving it cancels
 class PlayerNameEdit : public QLineEdit {
 public:
-    PlayerNameEdit(const QString& shown_, const QString& given_, QWidget* parent)
-        : QLineEdit(shown_, parent), shown{shown_}, given{given_} {
-        setObjectName(QStringLiteral("playerName"));
-        setFrame(false);
-        setCursorPosition(0);
-        QObject::connect(this, &QLineEdit::returnPressed, this, [this] { clearFocus(); });
-    }
+    using QLineEdit::QLineEdit;
 
-    std::function<void(const QString&)> on_rename;
+    std::function<void()> on_apply;
+    std::function<void()> on_cancel;
 
 protected:
-    void focusInEvent(QFocusEvent* event) override {
-        setMaxLength(16);
-        setText(given);
-        selectAll();
-        QLineEdit::focusInEvent(event);
-    }
-
-    void focusOutEvent(QFocusEvent* event) override {
-        QLineEdit::focusOutEvent(event);
-        const QString name = text().trimmed();
-        if (!cancelled && name != given && on_rename) {
-            on_rename(name);
-        }
-        cancelled = false;
-        setMaxLength(32767);
-        setText(shown);
-        setCursorPosition(0);
-    }
-
     void keyPressEvent(QKeyEvent* event) override {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            event->accept();
+            if (on_apply) {
+                on_apply();
+            }
+            return;
+        }
         if (event->key() == Qt::Key_Escape) {
-            cancelled = true;
-            clearFocus();
+            event->accept();
+            if (on_cancel) {
+                on_cancel();
+            }
             return;
         }
         QLineEdit::keyPressEvent(event);
     }
 
-private:
-    QString shown;
-    QString given;
-    bool cancelled = false;
+    void focusOutEvent(QFocusEvent* event) override {
+        QLineEdit::focusOutEvent(event);
+        if (isVisible() && on_cancel) {
+            on_cancel();
+        }
+    }
 };
+
+/// The icons of a player's name: edit (a pencil), apply (a check) and remove (a bin), drawn so
+/// they look the same everywhere
+QIcon NameIcon(int kind, const QColor& color) {
+    QPixmap pixmap(QSize(14, 14) * 2);
+    pixmap.setDevicePixelRatio(2);
+    pixmap.fill(Qt::transparent);
+    QPainter painter{&pixmap};
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    if (kind == 0) { // pencil
+        painter.drawLine(QPointF(3, 11), QPointF(10.5, 3.5));
+        painter.drawLine(QPointF(9, 2), QPointF(12, 5));
+        painter.drawLine(QPointF(2.5, 11.5), QPointF(2, 12));
+    } else if (kind == 1) { // check
+        const QPointF check[3] = {QPointF(2.5, 7.5), QPointF(5.5, 10.5), QPointF(11.5, 3.5)};
+        painter.drawPolyline(check, 3);
+    } else { // bin
+        painter.drawLine(QPointF(2, 3.5), QPointF(12, 3.5));
+        painter.drawLine(QPointF(5.5, 3.5), QPointF(5.5, 2));
+        painter.drawLine(QPointF(5.5, 2), QPointF(8.5, 2));
+        painter.drawLine(QPointF(8.5, 2), QPointF(8.5, 3.5));
+        painter.drawRoundedRect(QRectF(3.5, 3.5, 7, 9), 1, 1);
+        painter.drawLine(QPointF(6, 6), QPointF(6, 10));
+        painter.drawLine(QPointF(8, 6), QPointF(8, 10));
+    }
+    painter.end();
+    return QIcon{pixmap};
+}
 
 class PlayerRow : public QFrame {
 public:
@@ -1200,26 +1216,74 @@ void ConfigurePlayerAssignment::RefreshPlayers() {
                 }
             }
             line->addWidget(badge_box);
-            // The name: click to name the player's controller ("John" shows as "John (Xbox)")
-            auto* name = new PlayerNameEdit(QString::fromStdString(entry.name),
-                                            QString::fromStdString(entry.custom_name), row);
-            name->setPlaceholderText(tr("Name this controller"));
-            name->setToolTip(tr("Click to name P%1's controller. The name follows the "
-                                "controller, and Bluetooth controllers keep it.")
-                                 .arg(player + 1));
-            name->setStyleSheet(Themed(QStringLiteral(
-                "QLineEdit#playerName { background: transparent; border: none; "
-                "border-bottom: 1px solid transparent; padding: 0px 2px; }"
-                "QLineEdit#playerName:hover { border-bottom: 1px dashed palette(mid); }"
-                "QLineEdit#playerName:focus { background: palette(base); "
-                "border-bottom: 1px solid palette(highlight); }")));
-            name->setReadOnly(entry.leaving);
-            name->on_rename = [player](const QString& given) {
+            // The name, with a pencil to name the player's controller ("John" shows as
+            // "John (Xbox)"); editing shows the field, apply and remove
+            const QString given = QString::fromStdString(entry.custom_name);
+            auto* name_label = new QLabel(QString::fromStdString(entry.name), row);
+            auto* name_edit = new PlayerNameEdit(given, row);
+            name_edit->setObjectName(QStringLiteral("playerName"));
+            name_edit->setMaxLength(16);
+            name_edit->setPlaceholderText(tr("Name this controller"));
+            name_edit->setStyleSheet(ModernComboStyle().replace(QStringLiteral("QComboBox"),
+                                                                QStringLiteral("QLineEdit")));
+            name_edit->hide();
+            const QColor icon_color = Accent(this);
+            const auto name_button = [row, icon_color](int kind, const QString& tip) {
+                auto* button = new QToolButton(row);
+                button->setIcon(NameIcon(kind, icon_color));
+                button->setIconSize(QSize(14, 14));
+                button->setAutoRaise(true);
+                button->setCursor(Qt::PointingHandCursor);
+                button->setToolTip(tip);
+                // (Clicking it keeps the field focused: leaving the field cancels)
+                button->setFocusPolicy(Qt::NoFocus);
+                return button;
+            };
+            auto* name_edit_button = name_button(0, tr("Name P%1's controller").arg(player + 1));
+            auto* name_apply = name_button(1, tr("Apply the name"));
+            auto* name_remove = name_button(2, tr("Remove the name"));
+            name_apply->hide();
+            name_remove->hide();
+            name_edit_button->setEnabled(!entry.leaving);
+            const auto request = [player](const QString& value) {
                 auto& console = Common::GetControllerConsoleState();
                 std::scoped_lock lock{console.mutex};
-                console.rename_requests.emplace_back(player, given.toStdString());
+                console.rename_requests.emplace_back(player, value.trimmed().toStdString());
             };
-            line->addWidget(name, 1);
+            const auto editing = [=](bool on) {
+                name_label->setVisible(!on);
+                name_edit_button->setVisible(!on);
+                name_edit->setVisible(on);
+                name_apply->setVisible(on);
+                name_remove->setVisible(on && !given.isEmpty());
+                if (on) {
+                    name_edit->setText(given);
+                    name_edit->setFocus();
+                    name_edit->selectAll();
+                }
+            };
+            name_edit->on_apply = [=] {
+                editing(false);
+                if (name_edit->text().trimmed() != given) {
+                    request(name_edit->text());
+                }
+            };
+            name_edit->on_cancel = [=] { editing(false); };
+            connect(name_edit_button, &QToolButton::clicked, this, [=] { editing(true); });
+            connect(name_apply, &QToolButton::clicked, this, [=] { name_edit->on_apply(); });
+            connect(name_remove, &QToolButton::clicked, this, [=] {
+                editing(false);
+                request(QString{});
+            });
+            auto* name_line = new QHBoxLayout();
+            name_line->setSpacing(2);
+            name_line->addWidget(name_label);
+            name_line->addWidget(name_edit, 1);
+            name_line->addWidget(name_edit_button);
+            name_line->addWidget(name_apply);
+            name_line->addWidget(name_remove);
+            name_line->addStretch(1);
+            line->addLayout(name_line, 1);
             const bool live = !entry.leaving;
 
             // The profile the player's controller carries; picking one puts it on it, and
