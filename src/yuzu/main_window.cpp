@@ -83,12 +83,10 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QLineEdit>
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -6057,9 +6055,10 @@ void MainWindow::ApplyConsoleControllerMode() {
         }
     }
 
-    // Player Lights: each controller Eden reads itself (not Steam's pads: Steam sets those) shows
-    // its player on its player lights and light bar, in the player's colour
-    if (Settings::values.console_player_lights.GetValue()) {
+    // Player Lights: each controller shows its player on its player lights and light bar, in the
+    // player's colour. Not while Steam handles the controllers (even bypassed): Steam sets them.
+    if (Settings::values.console_player_lights.GetValue() &&
+        !(Common::RunningUnderSteam() && Common::GetControllerConsoleState().steam_pads_present)) {
         std::erase_if(lights_player, [&](const auto& e) { return !live.contains(e.first); });
         for (const auto& [id, slot] : pad_slots) {
             if (!live.contains(id) || IsSteamVirtualPad(id)) {

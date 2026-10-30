@@ -94,7 +94,7 @@ private:
     bool original_bypass = false;
     /// The Gameplay card: Use Any Controller as Joy-Cons, Button Layout, Pause When a Controller
     /// Disconnects, Player Lights
-    QWidget* joycon_box = nullptr;
+    QWidget* gameplay_box = nullptr;
     QAbstractButton* joycon_switch = nullptr;
     bool original_joycon = true;
     QButtonGroup* layout_group = nullptr;

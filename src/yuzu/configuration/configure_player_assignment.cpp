@@ -11,6 +11,7 @@
 #include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QBoxLayout>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -169,6 +170,26 @@ protected:
         QLineEdit::keyPressEvent(event);
     }
 };
+
+/// A setting's row: its title in bold, a line about it, and its control on the right
+void AddOptionRow(QBoxLayout* to, QWidget* parent, const QString& title, const QString& note,
+                  QWidget* control) {
+    auto* line = new QHBoxLayout();
+    auto* text = new QVBoxLayout();
+    text->setSpacing(1);
+    auto* title_label = new QLabel(title, parent);
+    QFont font = title_label->font();
+    font.setBold(true);
+    title_label->setFont(font);
+    auto* note_label = new QLabel(note, parent);
+    note_label->setWordWrap(true);
+    note_label->setObjectName(QStringLiteral("note"));
+    text->addWidget(title_label);
+    text->addWidget(note_label);
+    line->addLayout(text, 1);
+    line->addWidget(control, 0, Qt::AlignVCenter);
+    to->addLayout(line);
+}
 
 /// A controller's battery: a small cell filled to its charge (red when low, a bolt while it
 /// charges), as the overlay draws it
@@ -726,26 +747,11 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
 
     // Gameplay: how players' controllers behave in games
     auto* gameplay = new QGroupBox(tr("Gameplay"), this);
-    joycon_box = gameplay;
+    gameplay_box = gameplay;
     auto* gameplay_layout = new QVBoxLayout(gameplay);
-    // A title, a line about it, and its control on the right
     const auto add_option = [gameplay, gameplay_layout](const QString& title, const QString& note,
                                                         QWidget* control) {
-        auto* line = new QHBoxLayout();
-        auto* text = new QVBoxLayout();
-        text->setSpacing(1);
-        auto* title_label = new QLabel(title, gameplay);
-        QFont font = title_label->font();
-        font.setBold(true);
-        title_label->setFont(font);
-        auto* note_label = new QLabel(note, gameplay);
-        note_label->setWordWrap(true);
-        note_label->setObjectName(QStringLiteral("note"));
-        text->addWidget(title_label);
-        text->addWidget(note_label);
-        line->addLayout(text, 1);
-        line->addWidget(control, 0, Qt::AlignVCenter);
-        gameplay_layout->addLayout(line);
+        AddOptionRow(gameplay_layout, gameplay, title, note, control);
     };
     joycon_switch = new ToggleSwitch(gameplay);
     add_option(tr("Use Any Controller as Joy-Cons"),
@@ -798,22 +804,8 @@ ConfigurePlayerAssignment::ConfigurePlayerAssignment(QWidget* parent) : QWidget(
     auto* display_layout = new QVBoxLayout(display);
     const auto add_switch_to = [display](QVBoxLayout* to, const QString& title,
                                          const QString& note) {
-        auto* line = new QHBoxLayout();
-        auto* text = new QVBoxLayout();
-        text->setSpacing(1);
-        auto* title_label = new QLabel(title, display);
-        QFont font = title_label->font();
-        font.setBold(true);
-        title_label->setFont(font);
-        auto* note_label = new QLabel(note, display);
-        note_label->setWordWrap(true);
-        note_label->setObjectName(QStringLiteral("note"));
-        text->addWidget(title_label);
-        text->addWidget(note_label);
-        line->addLayout(text, 1);
         auto* toggle = new ToggleSwitch(display);
-        line->addWidget(toggle, 0, Qt::AlignVCenter);
-        to->addLayout(line);
+        AddOptionRow(to, display, title, note, toggle);
         return toggle;
     };
     const auto add_switch = [&](const QString& title, const QString& note) {
@@ -1061,7 +1053,7 @@ void ConfigurePlayerAssignment::UpdateModeUi() {
     }
     now_box->setVisible(automatic);
     display_box->setVisible(automatic);
-    joycon_box->setVisible(automatic);
+    gameplay_box->setVisible(automatic);
     about_box->setVisible(automatic);
     debug_box->setVisible(automatic);
     builtin_row->setVisible(selected == Settings::AppletMode::HandheldConsoleMode);
