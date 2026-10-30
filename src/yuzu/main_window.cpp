@@ -5853,9 +5853,20 @@ void MainWindow::ApplyConsoleControllerMode() {
                     }
                 }
                 const auto given = controller_names.find(name_key(pad));
+                // Handheld Console: the controller that took P1 from the handheld's own controls
+                // (they step aside while others are connected) carries the handheld's name when
+                // it has none of its own: it is the same person, docked
+                const auto handed = controller_names.find("handheld");
+                const bool inherits = given == controller_names.end() && i == 0 && handheld &&
+                                      builtin_valid && pad != builtin_match_id &&
+                                      !pad_slots.contains(builtin_match_id) &&
+                                      handed != controller_names.end();
                 if (given != controller_names.end()) {
                     custom_names[static_cast<std::size_t>(i)] = given->second;
                     name = QStringLiteral("%1 (%2)").arg(QString::fromStdString(given->second),
+                                                         ShortControllerName(pad, name));
+                } else if (inherits) {
+                    name = QStringLiteral("%1 (%2)").arg(QString::fromStdString(handed->second),
                                                          ShortControllerName(pad, name));
                 }
                 overlay_row_name[i] = name;
