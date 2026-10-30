@@ -2544,6 +2544,21 @@ std::tuple<int, bool, bool> SdlBattery(SDL_JoystickID id) {
     }
 }
 
+/// True for Nintendo's own controllers (and their look-alikes): their buttons already sit where
+/// the Switch's are, by label and by position
+bool IsNintendoPad(SDL_JoystickID id) {
+    switch (SDL_GetGamepadTypeForID(id)) {
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+    case SDL_GAMEPAD_TYPE_GAMECUBE:
+        return true;
+    default:
+        return SDL_GetJoystickVendorForID(id) == 0x057E;
+    }
+}
+
 /// A pad's USB product id, under the same lock as the rest of the API use.
 Uint16 PadProduct(SDL_JoystickID id) {
     const JoystickApiLock lock;
@@ -5899,11 +5914,19 @@ void MainWindow::ApplyConsoleControllerMode() {
             auto& player = players[slot];
             // A single Joy-Con held sideways for a game that only takes Joy-Cons (set above,
             // never by hand): the buttons and stick arranged to fit
-            if (joycon_auto_set[static_cast<std::size_t>(slot)] &&
+            const bool sideways =
+                joycon_auto_set[static_cast<std::size_t>(slot)] &&
                 (player.controller_type == Settings::ControllerType::RightJoycon ||
-                 player.controller_type == Settings::ControllerType::LeftJoycon)) {
+                 player.controller_type == Settings::ControllerType::LeftJoycon);
+            if (sideways) {
                 BindSidewaysJoyCon(want,
                                    player.controller_type == Settings::ControllerType::RightJoycon);
+            } else if (Settings::values.console_button_labels.GetValue() && !IsNintendoPad(id)) {
+                // Button Layout by label: an Xbox or PlayStation style controller's A is the
+                // Switch's A (the bindings go by position: its bottom button is the Switch's B)
+                using namespace Settings::NativeButton;
+                std::swap(want.buttons[A], want.buttons[B]);
+                std::swap(want.buttons[X], want.buttons[Y]);
             }
             player.profile_name = want.profile_name;
             if (player.buttons != want.buttons || player.analogs != want.analogs ||
@@ -5973,6 +5996,91 @@ void MainWindow::ApplyConsoleControllerMode() {
                           "console-mode: INVARIANT BROKEN inst={} slot={} in_range={} "
                           "unique={} - two pads fighting over one player or a corrupt slot",
                           id, slot, in_range, unique);
+            }
+        }
+    }
+
+    // Pause When a Controller Disconnects: a player whose controller left (its player held for it)
+    // and didn't come back within 3 seconds pauses the game; it resumes when every player the
+    // pause was for has a controller again (and only if it is still this pause)
+    {
+        const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+        for (int i = 0; i < static_cast<int>(players.size()) && i < 10; ++i) {
+            const bool held = std::any_of(pad_slots.begin(), pad_slots.end(),
+                                          [&](const auto& e) { return e.second == i; });
+            const bool here = std::any_of(pad_slots.begin(), pad_slots.end(), [&](const auto& e) {
+                return e.second == i && live.contains(e.first);
+            });
+            auto& since = waiting_since[static_cast<std::size_t>(i)];
+            since = held && !here ? (since ? since : now_ms) : 0;
+            if (since == 0) {
+                pause_done.erase(i); // (a new wait may pause again)
+            }
+        }
+        const bool running = emulation_running && QtCommon::emu_thread &&
+                             QtCommon::emu_thread->IsRunning();
+        if (!disconnect_paused.empty() && running) {
+            disconnect_paused.clear(); // (resumed by hand)
+        }
+        if (Settings::values.console_pause_disconnect.GetValue() && running) {
+            std::set<int> gone;
+            for (int i = 0; i < 10; ++i) {
+                // (Each wait pauses once: resumed by hand, the game keeps running)
+                if (waiting_since[static_cast<std::size_t>(i)] &&
+                    now_ms - waiting_since[static_cast<std::size_t>(i)] >= 3000 &&
+                    !pause_done.contains(i)) {
+                    gone.insert(i);
+                }
+            }
+            if (!gone.empty()) {
+                disconnect_paused = gone;
+                pause_done.insert(gone.begin(), gone.end());
+                LOG_INFO(Frontend, "console-mode: paused, P{}'s controller disconnected",
+                         *gone.begin() + 1);
+                controller_hints.push_back(
+                    {QString{}, *gone.begin(), false, now_ms, false,
+                     tr("P%1's controller disconnected: paused").arg(*gone.begin() + 1)});
+                OnPauseGame();
+            }
+        } else if (!disconnect_paused.empty() && !running && emulation_running) {
+            const bool all_back = std::all_of(
+                disconnect_paused.begin(), disconnect_paused.end(), [&](int player) {
+                    return std::any_of(pad_slots.begin(), pad_slots.end(), [&](const auto& e) {
+                        return e.second == player && live.contains(e.first);
+                    });
+                });
+            if (all_back) {
+                LOG_INFO(Frontend, "console-mode: resumed, the controllers are back");
+                disconnect_paused.clear();
+                OnStartGame();
+            }
+        }
+    }
+
+    // Player Lights: each controller Eden reads itself (not Steam's pads: Steam sets those) shows
+    // its player on its player lights and light bar, in the player's colour
+    if (Settings::values.console_player_lights.GetValue()) {
+        std::erase_if(lights_player, [&](const auto& e) { return !live.contains(e.first); });
+        for (const auto& [id, slot] : pad_slots) {
+            if (!live.contains(id) || IsSteamVirtualPad(id)) {
+                continue;
+            }
+            auto& shown = lights_player[id];
+            if (shown == slot + 1) {
+                continue;
+            }
+            shown = slot + 1;
+            const JoystickApiLock lock;
+            if (SDL_Gamepad* pad = SDL_OpenGamepad(id)) {
+                SDL_SetGamepadPlayerIndex(pad, slot);
+                const QColor color = ConfigurePlayerAssignment::PlayerColor(slot);
+                SDL_SetGamepadLED(pad, static_cast<Uint8>(color.red()),
+                                  static_cast<Uint8>(color.green()),
+                                  static_cast<Uint8>(color.blue()));
+                SDL_CloseGamepad(pad);
+            }
+            if (Common::ControllerProbes()) {
+                LOG_INFO(Frontend, "console-mode: inst={} lights show P{}", id, slot + 1);
             }
         }
     }

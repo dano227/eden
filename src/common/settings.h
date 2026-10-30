@@ -238,6 +238,18 @@ struct Values {
     /// Joy-Cons, or a single one held sideways with the buttons arranged to fit)
     SwitchableSetting<bool> console_joycon_auto{linkage, true, "console_joycon_auto",
                                                 Category::LibraryApplet};
+    /// Modern Console: pause the game when a player's controller has been gone for 3 seconds
+    /// (resumed when a controller takes the player again)
+    SwitchableSetting<bool> console_pause_disconnect{linkage, false, "console_pause_disconnect",
+                                                     Category::LibraryApplet};
+    /// Modern Console: controllers' player lights and light bars show their player (for the
+    /// controllers Eden reads itself; Steam sets them for its own)
+    SwitchableSetting<bool> console_player_lights{linkage, true, "console_player_lights",
+                                                  Category::LibraryApplet};
+    /// Modern Console: an Xbox or PlayStation style controller's buttons by their labels (its A is
+    /// the Switch's A) instead of their positions
+    SwitchableSetting<bool> console_button_labels{linkage, false, "console_button_labels",
+                                                  Category::LibraryApplet};
     /// Detailed controller traces in the log (every assignment tick), for bug reports. The
     /// devices are described either way (what adding a handheld to the allowlist needs).
     SwitchableSetting<bool> console_debug_probes{linkage, false, "console_debug_probes",

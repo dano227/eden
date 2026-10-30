@@ -721,6 +721,13 @@ private:
     /// that only takes Joy-Cons, and the type it set (a type set by hand is left alone)
     std::array<std::optional<Settings::ControllerType>, 10> joycon_auto_from{};
     std::array<std::optional<Settings::ControllerType>, 10> joycon_auto_set{};
+    /// Pause When a Controller Disconnects: since when each player waits for its controller
+    /// (0 none), and the players a pause was for (resumed when they all have one again)
+    std::array<qint64, 10> waiting_since{};
+    std::set<int> disconnect_paused;
+    std::set<int> pause_done;
+    /// Player Lights: the player each controller's lights were last set to (by connection)
+    std::map<u32, int> lights_player;
     int overlay_edit_player = -1;
     QString overlay_edit_text;
     /// The player whose tab the next settings dialog opens on (-1: as usual)

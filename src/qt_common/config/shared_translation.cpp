@@ -42,6 +42,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, console_valve_reader, QString(), QString());
     INSERT(Settings, console_controller_names, QString(), QString());
     INSERT(Settings, console_joycon_auto, QString(), QString());
+    INSERT(Settings, console_pause_disconnect, QString(), QString());
+    INSERT(Settings, console_player_lights, QString(), QString());
+    INSERT(Settings, console_button_labels, QString(), QString());
     INSERT(Settings, modern_seat_profiles, QString(), QString());
     INSERT(Settings, builtin_pad_identity, QString(), QString());
     INSERT(Settings, builtin_pad_steam_handle, QString(), QString());
