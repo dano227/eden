@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <mutex>
 #include <vector>
@@ -40,7 +41,7 @@ struct OverlayPanel {
 enum class OverlayPanelId : std::size_t {
     Players, ///< The controller players (top left)
     Hints,   ///< The controller hints (bottom left)
-    Cheats,  ///< The cheats (top right, a little lower)
+    Cheats,  ///< The cheats (top right)
     Count,
 };
 
@@ -51,9 +52,8 @@ inline constexpr std::size_t OverlayPanelCount = static_cast<std::size_t>(Overla
     static const bool placed = [] {
         panels[static_cast<std::size_t>(OverlayPanelId::Hints)].anchor =
             OverlayAnchor::BottomLeft;
-        auto& cheats = panels[static_cast<std::size_t>(OverlayPanelId::Cheats)];
-        cheats.anchor = OverlayAnchor::TopRight;
-        cheats.drop = 0.12f;
+        panels[static_cast<std::size_t>(OverlayPanelId::Cheats)].anchor =
+            OverlayAnchor::TopRight;
         return true;
     }();
     (void)placed;
@@ -73,7 +73,9 @@ struct OverlayRect {
 };
 
 /// Where a panel goes on a screen area (left, top, right, bottom): the one placement both the
-/// presenter and the frontend's mouse handling use. Read with the panel's mutex held.
+/// presenter and the frontend's mouse handling use. Whole pixels: between two, the image's
+/// edge would be filtered with what lies outside it (a dark line). Read with the panel's mutex
+/// held.
 [[nodiscard]] inline OverlayRect PlaceOverlayPanel(const OverlayPanel& panel, float left,
                                                    float top, float right, float bottom) {
     constexpr float margin = 4.0f;
@@ -84,7 +86,7 @@ struct OverlayRect {
     const float y = panel.anchor == OverlayAnchor::BottomLeft
                         ? bottom - height - margin
                         : top + margin + (bottom - top) * panel.drop;
-    return {x, y, width, height};
+    return {std::floor(x), std::floor(y), width, height};
 }
 
 } // namespace Common
