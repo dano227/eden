@@ -101,6 +101,7 @@
 #include <linux/hidraw.h>
 #include <linux/input.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 #include <QGuiApplication>
@@ -3284,6 +3285,10 @@ void MainWindow::RenderControllerOverlay() {
     for (const auto& row : overlay_rows) {
         name_w = (std::max)(name_w, name_fm.horizontalAdvance(overlay_row_name[row.player]));
     }
+    // (A name being typed has room for its 16 characters)
+    if (overlay_edit_player >= 0) {
+        name_w = (std::max)(name_w, name_fm.horizontalAdvance(QString(16, QLatin1Char('M'))));
+    }
     const int controller_w = inner + badge_w + 8 + name_w + inner + 4;
     // Room for as many of the widest chips as the history keeps (and the times between them),
     // so the image keeps its size as the bubbles change; without the history, room for a
@@ -3348,9 +3353,80 @@ void MainWindow::RenderControllerOverlay() {
             painter.setPen(Qt::NoPen);
         }
         painter.setFont(name_font);
+        if (row.player == overlay_edit_player && !gone) {
+            // The name being typed: a field with its caret (blinking), or what to type
+            const QRectF field(1 + inner + badge_w + 4, at_y + 4, name_w + 10, row_h - 8);
+            painter.setPen(QPen(QColor(120, 170, 255, 230), 1.2));
+            painter.setBrush(QColor(255, 255, 255, 30));
+            painter.drawRoundedRect(field, 5, 5);
+            const QRectF text_rect = field.adjusted(5, 0, -5, 0);
+            painter.setPen(overlay_edit_text.isEmpty() ? QColor(255, 255, 255, 110)
+                                                       : QColor(245, 245, 245));
+            painter.drawText(text_rect, Qt::AlignVCenter | Qt::AlignLeft,
+                             overlay_edit_text.isEmpty() ? tr("Name") : overlay_edit_text);
+            if ((QDateTime::currentMSecsSinceEpoch() / 500) % 2 == 0) {
+                const double caret = text_rect.left() +
+                                     (overlay_edit_text.isEmpty()
+                                          ? 0
+                                          : name_fm.horizontalAdvance(overlay_edit_text)) +
+                                     1;
+                painter.setPen(QPen(Qt::white, 1.2));
+                painter.drawLine(QPointF(caret, field.top() + 4), QPointF(caret, field.bottom() - 4));
+            }
+            painter.setPen(Qt::NoPen);
+            return;
+        }
         painter.setPen(gone ? QColor(255, 255, 255, 120) : QColor(240, 240, 240));
         painter.drawText(QRect(1 + inner + badge_w + 8, at_y, name_w + 4, row_h),
                          Qt::AlignVCenter | Qt::AlignLeft, overlay_row_name[row.player]);
+        painter.setPen(Qt::NoPen);
+    };
+    // The buttons of a name being typed, where the history goes: apply, remove the name (when
+    // it has one) and cancel
+    const auto edit_buttons = [&](std::size_t r, int at_y) {
+        const auto& row = overlay_rows[r];
+        constexpr int round_w = 24;
+        const bool named = !overlay_custom_name[static_cast<std::size_t>(row.player)].empty();
+        const int buttons = named ? 3 : 2;
+        const double x0 = 1 + controller_w + bubble_gap;
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(14, 14, 18, 200));
+        painter.drawRoundedRect(QRectF(x0, at_y, 8 + buttons * (round_w + chip_gap) - chip_gap,
+                                       row_h),
+                                row_h / 2.0, row_h / 2.0);
+        double x = x0 + 4;
+        const double h = row_h - 6;
+        const auto round = [&](int action, const QColor& fill) {
+            const QRectF rect(x, at_y + 3, round_w, h);
+            overlay_buttons.push_back({rect.toAlignedRect(), row.player, action, -1});
+            x += round_w + chip_gap;
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(fill);
+            painter.drawEllipse(rect.center(), h / 2.0, h / 2.0);
+            painter.setPen(QPen(Qt::white, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            painter.setBrush(Qt::NoBrush);
+            return rect.center();
+        };
+        // Apply: a check
+        {
+            const QPointF c = round(4, QColor(45, 160, 80, 230));
+            const QPointF check[3] = {QPointF(c.x() - 4.5, c.y()), QPointF(c.x() - 1.5, c.y() + 3),
+                                      QPointF(c.x() + 4.5, c.y() - 3.5)};
+            painter.drawPolyline(check, 3);
+        }
+        // Remove the name: a bin
+        if (named) {
+            const QPointF c = round(5, QColor(200, 50, 50, 230));
+            painter.drawLine(QPointF(c.x() - 4.5, c.y() - 3.5), QPointF(c.x() + 4.5, c.y() - 3.5));
+            painter.drawLine(QPointF(c.x() - 1.5, c.y() - 5), QPointF(c.x() + 1.5, c.y() - 5));
+            painter.drawRoundedRect(QRectF(c.x() - 3.5, c.y() - 3.5, 7, 8.5), 1, 1);
+        }
+        // Cancel: a cross
+        {
+            const QPointF c = round(6, QColor(255, 255, 255, 40));
+            painter.drawLine(QPointF(c.x() - 3.5, c.y() - 3.5), QPointF(c.x() + 3.5, c.y() + 3.5));
+            painter.drawLine(QPointF(c.x() + 3.5, c.y() - 3.5), QPointF(c.x() - 3.5, c.y() + 3.5));
+        }
         painter.setPen(Qt::NoPen);
     };
     // The row under the mouse shows its buttons where its history goes: swaps with the players
@@ -3476,6 +3552,11 @@ void MainWindow::RenderControllerOverlay() {
             drag_y = y;
         } else {
             controller_bubble(row, blink, y);
+        }
+        if (row.player == overlay_edit_player && row.pad != 0) {
+            edit_buttons(r, y);
+            y += row_h + row_gap;
+            continue;
         }
         if (row.player == overlay_hover_player && row.pad != 0 && !overlay_dragging &&
             row_buttons(r, y)) {
@@ -3611,6 +3692,50 @@ void MainWindow::RenderControllerOverlay() {
 
 bool MainWindow::HandleOverlayMouse(QEvent* event) {
     const auto type = event->type();
+    // A name being typed in the overlay takes the keys (and no shortcut fires meanwhile), while
+    // the overlay shows and the player is still there
+    if (overlay_edit_player >= 0) {
+        bool shown_now = false;
+        {
+            auto& frame = Common::GetControllerOverlayFrame();
+            std::scoped_lock lock{frame.mutex};
+            shown_now = frame.enabled;
+        }
+        const bool still_there =
+            std::any_of(overlay_rows.begin(), overlay_rows.end(), [this](const auto& row) {
+                return row.player == overlay_edit_player && row.pad != 0;
+            });
+        if (!shown_now || !still_there) {
+            overlay_edit_player = -1;
+        }
+    }
+    if (overlay_edit_player >= 0 &&
+        (type == QEvent::KeyPress || type == QEvent::KeyRelease ||
+         type == QEvent::ShortcutOverride)) {
+        event->accept();
+        if (type != QEvent::KeyPress) {
+            return true;
+        }
+        const auto* key = static_cast<QKeyEvent*>(event);
+        const int player = overlay_edit_player;
+        if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter ||
+            key->key() == Qt::Key_Escape) {
+            if (key->key() != Qt::Key_Escape) {
+                auto& state = Common::GetControllerConsoleState();
+                std::scoped_lock lock{state.mutex};
+                state.rename_requests.emplace_back(player,
+                                                   overlay_edit_text.trimmed().toStdString());
+            }
+            overlay_edit_player = -1;
+        } else if (key->key() == Qt::Key_Backspace) {
+            overlay_edit_text.chop(1);
+        } else if (!key->text().isEmpty() && key->text().at(0).isPrint() &&
+                   overlay_edit_text.size() < 16) {
+            overlay_edit_text += key->text();
+        }
+        RenderControllerOverlay();
+        return true;
+    }
     if (type == QEvent::Leave && overlay_hover_player >= 0) {
         overlay_hover_player = -1;
         RenderControllerOverlay();
@@ -3675,8 +3800,22 @@ bool MainWindow::HandleOverlayMouse(QEvent* event) {
             auto& state = Common::GetControllerConsoleState();
             std::scoped_lock lock{state.mutex};
             if (button->action == 3) {
-                const int player = button->player;
-                QTimer::singleShot(0, this, [this, player] { RenameFromOverlay(player); });
+                // Name it in place: typing goes to the field (the window takes the keys)
+                overlay_edit_player = button->player;
+                overlay_edit_text = QString::fromStdString(
+                    overlay_custom_name[static_cast<std::size_t>(button->player)]);
+                render_window->setFocus();
+                QTimer::singleShot(0, this, [this] { RenderControllerOverlay(); });
+            } else if (button->action >= 4 && button->action <= 6) {
+                // Apply (4), remove the name (5), cancel (6)
+                if (button->action != 6) {
+                    state.rename_requests.emplace_back(
+                        button->player, button->action == 4
+                                            ? overlay_edit_text.trimmed().toStdString()
+                                            : std::string{});
+                }
+                overlay_edit_player = -1;
+                QTimer::singleShot(0, this, [this] { RenderControllerOverlay(); });
             } else if (button->action == 2) {
                 // (After the event: the dialog runs its own loop)
                 const int player = button->player;
@@ -3750,41 +3889,9 @@ bool MainWindow::HandleOverlayMouse(QEvent* event) {
     return true;
 }
 
-void MainWindow::RenameFromOverlay(int player) {
-    QDialog dialog{this};
-    dialog.setWindowTitle(tr("Name P%1's Controller").arg(player + 1));
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* field = new QLineEdit(
-        QString::fromStdString(overlay_custom_name[static_cast<std::size_t>(player)]), &dialog);
-    field->setMaxLength(16);
-    field->setPlaceholderText(tr("Name this controller"));
-    field->selectAll();
-    layout->addWidget(field);
-    auto* buttons = new QDialogButtonBox(&dialog);
-    buttons->addButton(tr("Apply"), QDialogButtonBox::AcceptRole);
-    auto* remove = buttons->addButton(tr("Remove Name"), QDialogButtonBox::DestructiveRole);
-    buttons->addButton(QDialogButtonBox::Cancel);
-    remove->setEnabled(!overlay_custom_name[static_cast<std::size_t>(player)].empty());
-    layout->addWidget(buttons);
-    bool removing = false;
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    connect(remove, &QPushButton::clicked, &dialog, [&] {
-        removing = true;
-        dialog.accept();
-    });
-    if (dialog.exec() != QDialog::Accepted) {
-        return;
-    }
-    auto& state = Common::GetControllerConsoleState();
-    std::scoped_lock lock{state.mutex};
-    state.rename_requests.emplace_back(player, removing ? std::string{}
-                                                        : field->text().trimmed().toStdString());
-}
-
 bool MainWindow::OverlayAnimating() const {
     const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
-    if (!controller_hints.empty()) {
+    if (!controller_hints.empty() || overlay_edit_player >= 0) {
         return true;
     }
     const qint64 life_ms = Settings::values.console_history_seconds.GetValue() * 1000LL;

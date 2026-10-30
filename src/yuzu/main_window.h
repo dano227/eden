@@ -688,7 +688,8 @@ private:
     bool overlay_dragging = false;
     QPoint overlay_press;
     /// The row under the mouse, which shows its buttons (-1: none), and those buttons as drawn:
-    /// a swap with the player above (-1) or below (1), Turn Off (0), Config (2) or rename (3)
+    /// a swap with the player above (-1) or below (1), Turn Off (0), Config (2), rename (3), and
+    /// while a name is typed apply (4), remove the name (5) or cancel (6)
     int overlay_hover_player = -1;
     bool overlay_button_down = false;
     struct OverlayButton {
@@ -699,10 +700,11 @@ private:
     };
     std::vector<OverlayButton> overlay_buttons;
     bool HandleOverlayMouse(QEvent* event);
-    /// The overlay's pencil: a small dialog naming the player's controller
-    void RenameFromOverlay(int player);
-    /// Each player's given name as last shown ("" none), for that dialog
+    /// Each player's given name as last shown ("" none), and the name being typed in the overlay
+    /// (its pencil): the player (-1 none) and the text so far
     std::array<std::string, 10> overlay_custom_name{};
+    int overlay_edit_player = -1;
+    QString overlay_edit_text;
     /// The player whose tab the next settings dialog opens on (-1: as usual)
     int open_player_tab = -1;
     /// Under gamescope, makes a window fill the screen (see the definition)
