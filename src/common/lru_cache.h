@@ -60,9 +60,9 @@ public:
         free_items.push_back(id);
     }
 
-    // Resume after the last inspected item without changing its usage tick (Sudachi's
-    // pattern): the cursor advances before the callback so the callback may destroy the
-    // current item, and the sweep continues next call instead of re-scanning.
+    // Resume after the last inspected item without changing its usage tick: the cursor
+    // advances before the callback so the callback may destroy the current item, and the
+    // sweep continues next call instead of re-scanning.
     template <typename Func>
     void ForEachItemBelowResumable(TickType tick, Func&& func) {
         Item* iterator = next_gc_item ? next_gc_item : first_item;
@@ -132,6 +132,10 @@ private:
     }
 
     void Detach(Item& item) {
+        // The sweep's cursor must not stay on an item that leaves its place in the list
+        if (&item == next_gc_item) {
+            next_gc_item = item.next;
+        }
         if (item.prev) {
             item.prev->next = item.next;
         }
