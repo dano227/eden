@@ -37,6 +37,8 @@ add_executable(yuzu
     applets/qt_web_browser_scripts.h
     bootmanager.cpp
     bootmanager.h
+    cheat_overlay.cpp
+    cheat_overlay.h
     configuration/configuration_shared.cpp
     configuration/configuration_shared.h
     configuration/configure.ui

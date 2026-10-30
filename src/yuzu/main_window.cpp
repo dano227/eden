@@ -44,6 +44,7 @@
 #include "ryujinx_dialog.h"
 #include "set_play_time_dialog.h"
 #include "util/util.h"
+#include "yuzu/cheat_overlay.h"
 #include "yuzu/game/game_list.h"
 #include "yuzu/overlay_panel.h"
 
@@ -225,6 +226,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <QImage>
 #include <QPainter>
 #include <QSettings>
+#include "common/hex_util.h"
 #include "common/overlay_panels.h"
 #include "common/param_package.h"
 #include "qt_common/gamemode.h"
@@ -1674,6 +1676,7 @@ void MainWindow::InitializeHotkeys() {
                        QStringLiteral("Toggle Performance Overlay"));
     LinkActionShortcut(ui->action_Show_Controller_Overlay,
                        QStringLiteral("Toggle Controller Overlay"));
+    LinkActionShortcut(ui->action_Show_Cheat_Overlay, QStringLiteral("Toggle Cheat Overlay"));
     LinkActionShortcut(ui->action_Fullscreen, QStringLiteral("Fullscreen"));
     LinkActionShortcut(ui->action_Capture_Screenshot, QStringLiteral("Capture Screenshot"));
     LinkActionShortcut(ui->action_TAS_Start, QStringLiteral("TAS Start/Stop"), true);
@@ -1784,6 +1787,7 @@ void MainWindow::RestoreUIState() {
         UISettings::values.show_perf_overlay.GetValue());
     ui->action_Show_Controller_Overlay->setChecked(
         Settings::values.console_debug_overlay.GetValue());
+    ui->action_Show_Cheat_Overlay->setChecked(Settings::values.cheat_overlay.GetValue());
     if (perf_overlay)
         perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
     Debugger::ToggleConsole();
@@ -1867,6 +1871,13 @@ void MainWindow::ConnectWidgetEvents() {
     // runs when the membership changes).
     console_mode_timer.start(std::chrono::milliseconds{250});
     connect(this, &MainWindow::EmulationStopping, this, &MainWindow::ClearRuntimeCheats);
+    // A cheat turned on or off over the game goes through its menu action, like a click there
+    cheat_overlay = std::make_unique<CheatOverlay>([this](int index) {
+        if (index >= 0 && index < static_cast<int>(runtime_cheat_actions.size()) &&
+            runtime_cheat_actions[static_cast<std::size_t>(index)]->isEnabled()) {
+            runtime_cheat_actions[static_cast<std::size_t>(index)]->toggle();
+        }
+    });
 
     connect(&status_bar_update_timer, &QTimer::timeout, this, &MainWindow::UpdateStatusBar);
 
@@ -6444,20 +6455,54 @@ void MainWindow::RefreshRuntimeCheats() {
                     state.beginGroup(title_group);
                     state.setValue(name, enabled);
                 });
+        connect(action, &QAction::toggled, this, &MainWindow::UpdateCheatOverlay);
         runtime_cheat_actions.push_back(action);
     }
     cheat_state.endGroup();
 
     ui->menu_Cheats->menuAction()->setVisible(!runtime_cheat_actions.empty());
+    // (The game's own value: its configuration is read by now)
+    ui->action_Show_Cheat_Overlay->setChecked(Settings::values.cheat_overlay.GetValue());
+    UpdateCheatOverlay();
 }
 
 void MainWindow::ClearRuntimeCheats() {
     ui->menu_Cheats->clear();
     runtime_cheat_actions.clear();
     ui->menu_Cheats->menuAction()->setVisible(false);
+    UpdateCheatOverlay();
+}
+
+void MainWindow::UpdateCheatOverlay() {
+    if (!cheat_overlay) {
+        return;
+    }
+    const bool shown = Settings::values.cheat_overlay.GetValue() && QtCommon::system &&
+                       QtCommon::system->IsPoweredOn();
+    std::vector<CheatOverlay::Cheat> cheats;
+    QString game_id;
+    QString build_id;
+    if (shown) {
+        for (const auto* action : runtime_cheat_actions) {
+            cheats.push_back({action->text(), action->isChecked(), !action->isEnabled()});
+        }
+        game_id = QStringLiteral("%1")
+                      .arg(QtCommon::system->GetApplicationProcessProgramID(), 16, 16, QChar(u'0'))
+                      .toUpper();
+        // (What the game's cheat files are named after: the first half of its build id)
+        build_id = QString::fromStdString(
+            Common::HexToString(QtCommon::system->GetApplicationProcessBuildID(), true)
+                .substr(0, 16));
+    }
+    cheat_overlay->Update(shown, game_id, build_id, std::move(cheats));
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // The cheats over the game take the mouse over their panel (top right)
+    if (watched == render_window && cheat_overlay &&
+        cheat_overlay->HandleMouse(event, *render_window)) {
+        return true;
+    }
     // The controller overlay takes the mouse over its rows (drag to swap, click to rumble)
     if (watched == render_window && HandleOverlayMouse(event)) {
         return true;
@@ -6507,6 +6552,10 @@ void MainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Show_Performance_Overlay, &MainWindow::OnTogglePerfOverlay);
     connect(ui->action_Show_Controller_Overlay, &QAction::toggled, this,
             [](bool shown) { Settings::values.console_debug_overlay.SetValue(shown); });
+    connect(ui->action_Show_Cheat_Overlay, &QAction::toggled, this, [this](bool shown) {
+        Settings::values.cheat_overlay.SetValue(shown);
+        UpdateCheatOverlay();
+    });
 #ifdef HAS_RESHADE
     connect_menu(ui->action_Post_Processing_Shaders, &MainWindow::OnPostProcessingShaders);
 #else
@@ -8496,6 +8545,8 @@ void MainWindow::OnConfigure() {
     MergeConsoleProfileEdits(players_before);
     ui->action_Show_Controller_Overlay->setChecked(
         Settings::values.console_debug_overlay.GetValue());
+    ui->action_Show_Cheat_Overlay->setChecked(Settings::values.cheat_overlay.GetValue());
+    UpdateCheatOverlay();
     InitializeHotkeys();
 
     if (UISettings::values.theme != old_theme) {
@@ -8747,6 +8798,11 @@ void MainWindow::OpenPerGameConfiguration(u64 title_id, const std::string& file_
         return;
     } else if (result == QDialog::Accepted) {
         dialog.ApplyConfiguration();
+        // (The running game's own value; otherwise the View menu keeps showing the global one)
+        if (QtCommon::system->IsPoweredOn()) {
+            ui->action_Show_Cheat_Overlay->setChecked(Settings::values.cheat_overlay.GetValue());
+            UpdateCheatOverlay();
+        }
     }
 
     const auto reload = UISettings::values.is_game_list_reload_pending.exchange(false);

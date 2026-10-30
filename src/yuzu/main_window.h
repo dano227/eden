@@ -54,6 +54,7 @@ class QtConfig;
 class EmuThread;
 class GameList;
 class GImageInfo;
+class CheatOverlay;
 class GRenderWindow;
 class LoadingScreen;
 class OverlayDialog;
@@ -280,6 +281,8 @@ private:
     void UpdateMenuState();
     void RefreshRuntimeCheats();
     void ClearRuntimeCheats();
+    /// Shows the running game's cheats over the game, or hides them
+    void UpdateCheatOverlay();
 
     void SetupPrepareForSleep();
 
@@ -569,6 +572,7 @@ private:
 
     QActionGroup* game_size_actions;
     std::vector<QAction*> runtime_cheat_actions;
+    std::unique_ptr<CheatOverlay> cheat_overlay;
 
     /// Console modes: reapplies the emulated player count from the physically connected
     /// gamepads on a timer
