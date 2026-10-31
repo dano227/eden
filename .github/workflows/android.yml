@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - "Console-Modes"
+      - "android-controller-assignment-pr4583"
   workflow_dispatch:
 
 jobs:
