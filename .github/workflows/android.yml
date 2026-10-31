@@ -1,3 +1,4 @@
+
 name: Build Eden Android APK
 
 on:
@@ -8,6 +9,7 @@ on:
 jobs:
   android-build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Code herunterladen
         uses: actions/checkout@v4
@@ -17,21 +19,34 @@ jobs:
       - name: Java 17 einrichten
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
       - name: Android SDK einrichten
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
 
-      - name: SDK Lizenzen akzeptieren & NDK installieren
+      - name: NDK, CMake und Android SDK installieren
+        shell: bash
         run: |
-          echo "y" | sdkmanager --licenses
-          echo "y" | sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1" "build-tools;34.0.0" "platforms;android-34"
+          set -e
+          echo "Android SDK: $ANDROID_SDK_ROOT"
+          which sdkmanager
+
+          sdkmanager --install \
+            "ndk;26.3.11579264" \
+            "cmake;3.22.1" \
+            "build-tools;34.0.0" \
+            "platforms;android-34"
+
+      - name: Android NDK konfigurieren
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> $GITHUB_ENV
 
       - name: Eden APK bauen
         working-directory: src/android
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.3.11579264
         run: |
           chmod +x gradlew
           ./gradlew assembleMainlineRelease --no-daemon
@@ -41,3 +56,4 @@ jobs:
         with:
           name: Eden-AutoController-APK
           path: src/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
