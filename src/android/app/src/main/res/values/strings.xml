@@ -30,6 +30,8 @@
     <string name="controller_assignment_modern_console">Modern Console (automatic)</string>
     <string name="controller_handheld_title">Built-in controller</string>
     <string name="controller_handheld_description">Include the device's built-in controls after external controllers in the player order?</string>
+    <string name="controller_handheld_enable">Include built-in controller</string>
+    <string name="controller_handheld_disable">External controllers only</string>
 
     <!-- Input Overlay -->
     <string name="show_input_overlay">Show Input Overlay</string>
