@@ -25,15 +25,13 @@ jobs:
       - name: Android SDK einrichten
         uses: android-actions/setup-android@v3
         with:
+          packages: 'platform-tools'
           accept-android-sdk-licenses: true
 
       - name: NDK, CMake und Android SDK installieren
         shell: bash
         run: |
           set -e
-          echo "Android SDK: $ANDROID_SDK_ROOT"
-          which sdkmanager
-
           sdkmanager --install \
             "ndk;26.3.11579264" \
             "cmake;3.22.1" \
