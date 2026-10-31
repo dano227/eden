@@ -6,9 +6,14 @@
 
 package org.yuzu.yuzu_emu.utils
 
+import android.content.Context
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import org.yuzu.yuzu_emu.YuzuApplication
+import org.yuzu.yuzu_emu.features.input.ControllerAssignment
+import org.yuzu.yuzu_emu.features.input.ControllerAssignmentMode
+import org.yuzu.yuzu_emu.features.input.ControllerCandidate
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.features.input.YuzuInputOverlayDevice
 import org.yuzu.yuzu_emu.features.input.YuzuPhysicalDevice
@@ -16,6 +21,39 @@ import org.yuzu.yuzu_emu.features.input.YuzuPhysicalDevice
 object InputHandler {
     var androidControllers = mapOf<Int, YuzuPhysicalDevice>()
     var registeredControllers = mutableListOf<ParamPackage>()
+
+    private const val ASSIGNMENT_PREFERENCES = "controller_assignment"
+    private const val MODE_KEY = "mode"
+    private const val HANDHELD_KEY = "handheld_enabled"
+
+    /** Session assignment mode. Manual remains the default for existing installations. */
+    var assignmentMode: ControllerAssignmentMode
+        get() = ControllerAssignmentMode.fromPreference(
+            YuzuApplication.appContext
+                .getSharedPreferences(ASSIGNMENT_PREFERENCES, Context.MODE_PRIVATE)
+                .getString(MODE_KEY, ControllerAssignmentMode.MANUAL.name)
+        )
+        set(value) {
+            YuzuApplication.appContext
+                .getSharedPreferences(ASSIGNMENT_PREFERENCES, Context.MODE_PRIVATE)
+                .edit()
+                .putString(MODE_KEY, value.name)
+                .apply()
+            updateControllerData()
+        }
+
+    var handheldControllerEnabled: Boolean
+        get() = YuzuApplication.appContext
+            .getSharedPreferences(ASSIGNMENT_PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean(HANDHELD_KEY, true)
+        set(value) {
+            YuzuApplication.appContext
+                .getSharedPreferences(ASSIGNMENT_PREFERENCES, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(HANDHELD_KEY, value)
+                .apply()
+            updateControllerData()
+        }
 
     private val controllerButtons = intArrayOf(
         KeyEvent.KEYCODE_BUTTON_A,
@@ -127,25 +165,43 @@ object InputHandler {
     }
 
     fun getDevices(): Map<Int, YuzuPhysicalDevice> {
-        val gameControllerDeviceIds = mutableMapOf<Int, YuzuPhysicalDevice>()
-        val deviceIds = InputDevice.getDeviceIds()
-        var port = 0
         val inputSettings = NativeConfig.getInputSettings(true)
-        deviceIds.forEach { deviceId ->
-            InputDevice.getDevice(deviceId)?.apply {
-                if (isPhysicalGameController(this)) {
-                    if (!gameControllerDeviceIds.contains(controllerNumber)) {
-                        gameControllerDeviceIds[controllerNumber] = YuzuPhysicalDevice(
-                            this,
-                            port,
-                            inputSettings[port].useSystemVibrator
-                        )
-                    }
-                    port++
-                }
-            }
+        val devices = InputDevice.getDeviceIds().mapNotNull { deviceId ->
+            InputDevice.getDevice(deviceId)?.takeIf { isPhysicalGameController(it) }
+        }.distinctBy { it.controllerNumber }
+
+        val candidates = devices.map {
+            ControllerCandidate(
+                androidControllerNumber = it.controllerNumber,
+                guid = it.getGUID(),
+                displayName = it.name,
+                // Android reports built-in controllers as non-external input devices.
+                isBuiltInHandheld = !it.isExternal
+            )
         }
-        return gameControllerDeviceIds
+
+        // Real Hardware needs the native Android console-HID applet path. Until that is wired,
+        // keep the existing Android pad path rather than silently dropping all physical pads.
+        val effectiveMode = if (assignmentMode == ControllerAssignmentMode.REAL_HARDWARE) {
+            ControllerAssignmentMode.MANUAL
+        } else {
+            assignmentMode
+        }
+        val assignments = ControllerAssignment.assign(
+            candidates,
+            effectiveMode,
+            handheldControllerEnabled
+        )
+        val devicesByNumber = devices.associateBy { it.controllerNumber }
+
+        return assignments.associate { assignment ->
+            val device = devicesByNumber.getValue(assignment.controller.androidControllerNumber)
+            assignment.controller.androidControllerNumber to YuzuPhysicalDevice(
+                device,
+                assignment.playerIndex,
+                inputSettings[assignment.playerIndex].useSystemVibrator
+            )
+        }
     }
 
     fun updateControllerData() {
