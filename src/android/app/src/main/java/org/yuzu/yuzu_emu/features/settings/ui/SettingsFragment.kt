@@ -30,6 +30,7 @@ import com.google.android.material.transition.MaterialSharedAxis
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.FragmentSettingsBinding
 import org.yuzu.yuzu_emu.features.input.NativeInput
+import org.yuzu.yuzu_emu.features.input.ControllerAssignmentMode
 import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.features.settings.model.view.PathSetting
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
@@ -172,6 +173,11 @@ class SettingsFragment : Fragment() {
                         true
                     }
 
+                    R.id.action_controller_assignment -> {
+                        showControllerAssignmentDialog()
+                        true
+                    }
+
                     else -> false
                 }
             }
@@ -230,6 +236,42 @@ private fun getPlayerIndex(): Int =
             binding.appbarSettings.updateMargins(left = leftInsets, right = rightInsets)
             windowInsets
         }
+    }
+
+    private fun showControllerAssignmentDialog() {
+        val modes = arrayOf(
+            getString(R.string.controller_assignment_manual),
+            getString(R.string.controller_assignment_real_hardware),
+            getString(R.string.controller_assignment_modern_console)
+        )
+        val values = ControllerAssignmentMode.values()
+        val selected = values.indexOf(InputHandler.assignmentMode).coerceAtLeast(0)
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.controller_assignment_title)
+            .setSingleChoiceItems(modes, selected) { dialog, which ->
+                InputHandler.assignmentMode = values[which]
+                dialog.dismiss()
+                if (values[which] == ControllerAssignmentMode.MODERN_CONSOLE) {
+                    showHandheldAssignmentDialog()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showHandheldAssignmentDialog() {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.controller_handheld_title)
+            .setMessage(R.string.controller_handheld_description)
+            .setPositiveButton(R.string.enable) { _, _ ->
+                InputHandler.handheldControllerEnabled = true
+            }
+            .setNegativeButton(R.string.disable) { _, _ ->
+                InputHandler.handheldControllerEnabled = false
+            }
+            .setNeutralButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun hasAllFilesPermission(): Boolean {
