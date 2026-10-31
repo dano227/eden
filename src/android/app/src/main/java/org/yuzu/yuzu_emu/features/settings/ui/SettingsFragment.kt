@@ -239,12 +239,15 @@ private fun getPlayerIndex(): Int =
     }
 
     private fun showControllerAssignmentDialog() {
+        // Real Hardware is not offered until Android is connected to the native console-HID applet.
+        val values = arrayOf(
+            ControllerAssignmentMode.MANUAL,
+            ControllerAssignmentMode.MODERN_CONSOLE
+        )
         val modes = arrayOf(
             getString(R.string.controller_assignment_manual),
-            getString(R.string.controller_assignment_real_hardware),
             getString(R.string.controller_assignment_modern_console)
         )
-        val values = ControllerAssignmentMode.values()
         val selected = values.indexOf(InputHandler.assignmentMode).coerceAtLeast(0)
 
         MaterialAlertDialogBuilder(requireContext())
