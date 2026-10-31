@@ -267,10 +267,10 @@ private fun getPlayerIndex(): Int =
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.controller_handheld_title)
             .setMessage(R.string.controller_handheld_description)
-            .setPositiveButton(R.string.enable) { _, _ ->
+            .setPositiveButton(R.string.controller_handheld_enable) { _, _ ->
                 InputHandler.handheldControllerEnabled = true
             }
-            .setNegativeButton(R.string.disable) { _, _ ->
+            .setNegativeButton(R.string.controller_handheld_disable) { _, _ ->
                 InputHandler.handheldControllerEnabled = false
             }
             .setNeutralButton(android.R.string.cancel, null)
