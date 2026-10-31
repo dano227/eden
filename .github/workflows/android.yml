@@ -20,15 +20,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Android SDK & NDK einrichten
-        uses: android-actions/setup-android@v3
-        with:
-          ndk-version: '26.3.11579264'
-          cmake-version: '3.22.1'
-
-      - name: CMake & Build-Tools installieren
+      - name: Android SDK Lizenzen akzeptieren & NDK installieren
         run: |
-          echo "y" | sdkmanager --install "build-tools;34.0.0" "platforms;android-34"
+          echo "y" | sdkmanager --licenses
+          echo "y" | sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1" "build-tools;34.0.0" "platforms;android-34"
 
       - name: Eden APK bauen
         working-directory: src/android
