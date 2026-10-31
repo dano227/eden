@@ -16,7 +16,7 @@ enum class ControllerAssignmentMode {
 
     companion object {
         fun fromPreference(value: String?): ControllerAssignmentMode =
-            entries.firstOrNull { it.name == value } ?: MANUAL
+            values().firstOrNull { it.name == value } ?: MANUAL
     }
 }
 
