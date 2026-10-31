@@ -7,6 +7,7 @@
 package org.yuzu.yuzu_emu.activities
 
 import android.annotation.SuppressLint
+import org.yuzu.yuzu_emu.features.input.AutoControllerSwitcher
 import android.app.Activity
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
@@ -244,14 +245,15 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
     }
 
     override fun onResume() {
-        super.onResume()
-        nfcReader.startScanning()
-        startMotionSensorListener()
-        InputHandler.updateControllerData()
-        notifyPhysicalControllerState()
+    super.onResume()
+    nfcReader.startScanning()
+    startMotionSensorListener()
+    InputHandler.updateControllerData()
+    notifyPhysicalControllerState()
+    AutoControllerSwitcher(this).register()
 
-        buildPictureInPictureParams()
-    }
+    buildPictureInPictureParams()
+}
 
     override fun onPause() {
         nfcReader.stopScanning()
