@@ -23,6 +23,14 @@
 
     <string name="using_per_game_config">Using Per-Game Config</string>
 
+    <!-- Controller assignment modes -->
+    <string name="controller_assignment_title">Controller assignment</string>
+    <string name="controller_assignment_manual">Manual (existing player slots)</string>
+    <string name="controller_assignment_real_hardware">Real Hardware (console applet)</string>
+    <string name="controller_assignment_modern_console">Modern Console (automatic)</string>
+    <string name="controller_handheld_title">Built-in controller</string>
+    <string name="controller_handheld_description">Include the device's built-in controls after external controllers in the player order?</string>
+
     <!-- Input Overlay -->
     <string name="show_input_overlay">Show Input Overlay</string>
     <string name="show_input_overlay_description">Display touch controls overlay during emulation</string>
