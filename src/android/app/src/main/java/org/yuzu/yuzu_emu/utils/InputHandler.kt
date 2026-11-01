@@ -166,9 +166,10 @@ object InputHandler {
 
     fun getDevices(): Map<Int, YuzuPhysicalDevice> {
         val inputSettings = NativeConfig.getInputSettings(true)
-        val devices = InputDevice.getDeviceIds().mapNotNull { deviceId ->
-            InputDevice.getDevice(deviceId)?.takeIf { isPhysicalGameController(it) }
-        }.distinctBy { it.controllerNumber }
+        val devices = InputDevice.getDeviceIds().map { deviceId ->
+            InputDevice.getDevice(deviceId)
+        }.filterNotNull().filter { isPhysicalGameController(it) }
+            .distinctBy { it.controllerNumber }
 
         val candidates = devices.map {
             ControllerCandidate(
