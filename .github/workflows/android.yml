@@ -46,7 +46,7 @@ jobs:
         working-directory: src/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleMainlineRelease --no-daemon
+          ./gradlew assembleMainlineRelWithDebInfo --no-daemon
 
       # Fertige APK als Download bereitstellen
       - name: Fertige APK bereitstellen
